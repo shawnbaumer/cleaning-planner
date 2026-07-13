@@ -30,6 +30,8 @@ and what fits the time available.
 - **vite-plugin-pwa** — service worker + web app manifest for installability
   and offline support
 - **Dexie** — wrapper around IndexedDB for local data persistence
+- **dexie-react-hooks** — `useLiveQuery`, keeps the UI in sync with IndexedDB
+  changes without manual refetching
 
 ## Folder structure
 
@@ -77,10 +79,14 @@ Defined in `src/lib/db.ts` as three Dexie (IndexedDB) tables:
 
 ## Status
 
-Data layer built (rooms/tasks/completion logs, urgency + adaptive duration
-helpers, starter seed data) — no UI built on top of it yet. `npm run dev`
-still shows a plain "Hello World" screen. Next up: UI for the room/task
-list, progress-bar urgency, and logging completions.
+Single-screen UI built on top of the data layer (`src/App.tsx`): seeds the
+database on first load, lists all tasks sorted most-urgent first, shows each
+task's room, name, and a `percentDue` progress bar (red past 100%/overdue).
+"Mark done" reveals a row of duration chips (5/10/15/20/30 min, plus the
+task's current estimate) with the estimate pre-selected — confirming with
+that default is one tap; picking another chip first still only takes one
+more. No add/edit-task screen or navigation yet. Next up: the "give me X
+minutes" suggestion feature.
 
 ## Commands
 

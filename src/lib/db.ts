@@ -144,10 +144,13 @@ const DEFAULT_TASKS: SeedTask[] = [
 
 /** Seeds a small starter set of rooms and tasks. No-ops if any rooms already exist. */
 export async function seedDatabase(): Promise<void> {
-  const existingRoomCount = await db.rooms.count()
-  if (existingRoomCount > 0) return
-
   await db.transaction('rw', db.rooms, db.tasks, async () => {
+    // Check inside the transaction (rather than before it) so concurrent
+    // calls — e.g. React StrictMode double-invoking an effect in dev — can't
+    // both pass the check before either has inserted anything.
+    const existingRoomCount = await db.rooms.count()
+    if (existingRoomCount > 0) return
+
     const roomIdByType = new Map<RoomType, number>()
 
     for (const room of DEFAULT_ROOMS) {

@@ -6,6 +6,22 @@ A personal iPhone cleaning-planner PWA. Helps track and schedule household
 cleaning tasks. Installable to the iPhone home screen, works offline, and
 stores all data locally on-device — no backend, no account, no sync.
 
+## Vision
+
+Tasks are organized by room. Each task has a target frequency (e.g. every 7
+days), and its urgency is shown as a progress bar: 0% means just completed,
+100% means due now, and past 100% means overdue — so at a glance you can see
+what most needs attention.
+
+Duration estimates start from reasonable defaults but adapt over time: every
+time a task is logged as done, its actual duration feeds into a rolling
+average that updates `estimatedDurationMinutes`, so the app's time estimates
+get more accurate the more it's used.
+
+A future feature: "give me X minutes" — tell the app how much time you have,
+and it suggests which task(s) to knock out, favoring what's most overdue
+and what fits the time available.
+
 ## Tech stack
 
 - **Vite** — build tool / dev server
@@ -30,11 +46,41 @@ stores all data locally on-device — no backend, no account, no sync.
 └── package.json
 ```
 
+## Data model
+
+Defined in `src/lib/db.ts` as three Dexie (IndexedDB) tables:
+
+- **Room** — `id`, `name`, `type` (`bedroom` | `bathroom` | `kitchen` |
+  `living-room` | `other`)
+- **Task** — `id`, `roomId`, `name`, `frequencyDays` (target interval between
+  completions), `estimatedDurationMinutes` (adaptive estimate),
+  `lastCompletedDate` (epoch ms, or `null` if never completed)
+- **CompletionLog** — `id`, `taskId`, `completedDate` (epoch ms),
+  `actualDurationMinutes` (optional — omitted if not tracked for that
+  completion)
+
+### Helper functions (`src/lib/db.ts`)
+
+- `percentDue(task, now?)` — how close a task is to due, as a percent
+  (0-100+; 100+ means overdue)
+- `isOverdue(task, now?)` — `percentDue(task) >= 100`
+- `logCompletion(taskId, { completedDate?, actualDurationMinutes? })` —
+  inserts a `CompletionLog` row, updates the task's `lastCompletedDate`, and
+  refreshes its `estimatedDurationMinutes`
+- `recalculateEstimatedDuration(taskId)` — recomputes
+  `estimatedDurationMinutes` as the average of the task's last 5 logged
+  durations, falling back to (leaving unchanged) the current estimate if
+  there's no duration history yet
+- `seedDatabase()` — populates a starter set of rooms and common tasks with
+  research-backed default frequencies/durations; no-ops if any room already
+  exists
+
 ## Status
 
-Skeleton stage: project scaffolding only, no features built yet. `npm run
-dev` should show a plain "Hello World" screen. Future work will add the
-actual cleaning task/schedule data model (in `src/lib/db.ts`) and UI.
+Data layer built (rooms/tasks/completion logs, urgency + adaptive duration
+helpers, starter seed data) — no UI built on top of it yet. `npm run dev`
+still shows a plain "Hello World" screen. Next up: UI for the room/task
+list, progress-bar urgency, and logging completions.
 
 ## Commands
 

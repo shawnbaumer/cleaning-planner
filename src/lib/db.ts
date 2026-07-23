@@ -61,6 +61,44 @@ export function isOverdue(task: Task, now: Date = new Date()): boolean {
 }
 
 /**
+ * Milliseconds until this task is next due. Positive = time still remaining,
+ * negative = overdue by that amount. A never-completed task counts as due now (0).
+ */
+export function msUntilDue(task: Task, now: Date = new Date()): number {
+  if (task.lastCompletedDate === null) return 0
+  const dueAt = task.lastCompletedDate + task.frequencyDays * MS_PER_DAY
+  return dueAt - now.getTime()
+}
+
+/**
+ * A short human label for a task's due status in whole days, e.g. "Due in 3
+ * days", "Due today", or "Overdue by 2 days". Cleaning cadence is measured in
+ * days, so anything under half a day either way reads as "Due today".
+ */
+export function formatTimeUntilDue(task: Task, now: Date = new Date()): string {
+  const ms = msUntilDue(task, now)
+  const days = Math.round(Math.abs(ms) / MS_PER_DAY)
+
+  if (days === 0) return 'Due today'
+
+  const label = `${days} day${days === 1 ? '' : 's'}`
+  return ms >= 0 ? `Due in ${label}` : `Overdue by ${label}`
+}
+
+/**
+ * A compact overdue label for the badge in whole days, e.g. "2d". Returns an
+ * empty string when the task isn't overdue by at least a day (including a
+ * never-completed task, which is due-today rather than overdue-by-some-time).
+ */
+export function formatOverdueShort(task: Task, now: Date = new Date()): string {
+  const ms = msUntilDue(task, now)
+  if (ms >= 0) return ''
+
+  const days = Math.round(Math.abs(ms) / MS_PER_DAY)
+  return days >= 1 ? `${days}d` : ''
+}
+
+/**
  * Recalculates a task's estimatedDurationMinutes as the rolling average of its
  * last 5 completion logs that have a tracked duration. Falls back to (i.e.
  * leaves unchanged) the current estimate if there's no such history yet.
@@ -106,6 +144,63 @@ export async function logCompletion(
 
     await db.tasks.update(taskId, { lastCompletedDate: completedDate })
     await recalculateEstimatedDuration(taskId)
+  })
+}
+
+/** An emoji icon for a room, chosen by its type. */
+export function roomIcon(type: RoomType): string {
+  switch (type) {
+    case 'bedroom':
+      return '🛏️'
+    case 'bathroom':
+      return '🚿'
+    case 'kitchen':
+      return '🍳'
+    case 'living-room':
+      return '🛋️'
+    default:
+      return '🏠'
+  }
+}
+
+/**
+ * An emoji icon inferred from a task's name by keyword — e.g. a feather duster
+ * for "Dust". Falls back to a generic sponge so custom/unknown tasks still get
+ * an icon. First match wins, so order the more specific keywords first.
+ */
+export function taskIcon(name: string): string {
+  const n = name.toLowerCase()
+  if (n.includes('dust')) return '🪶'
+  if (n.includes('vacuum') || n.includes('sweep')) return '🧹'
+  if (n.includes('mop') || n.includes('floor')) return '🪣'
+  if (n.includes('sheet') || n.includes('bed') || n.includes('linen')) return '🛏️'
+  if (n.includes('window') || n.includes('glass') || n.includes('mirror')) return '🪟'
+  if (n.includes('bath') || n.includes('shower') || n.includes('toilet') || n.includes('sink'))
+    return '🚿'
+  if (n.includes('microwave') || n.includes('oven') || n.includes('fridge') || n.includes('dish'))
+    return '🍽️'
+  if (n.includes('trash') || n.includes('garbage') || n.includes('bin')) return '🗑️'
+  if (n.includes('laundry') || n.includes('wash')) return '🧺'
+  if (n.includes('counter') || n.includes('surface') || n.includes('wipe')) return '🧽'
+  return '🧽'
+}
+
+/**
+ * DEV-ONLY: scatters every task's lastCompletedDate across a range so the UI
+ * shows a mix of fresh, near-due, and overdue states. Each task is set to a
+ * random 0–1.7× of its own frequency ago, so percentDue lands roughly in
+ * 0–170% — giving overdue-by amounts from minutes (daily tasks) to weeks.
+ */
+export async function randomizeTaskState(): Promise<void> {
+  const now = Date.now()
+  const tasks = await db.tasks.toArray()
+
+  await db.transaction('rw', db.tasks, async () => {
+    for (const task of tasks) {
+      const elapsedDays = Math.random() * 1.7 * task.frequencyDays
+      const lastCompletedDate = Math.round(now - elapsedDays * MS_PER_DAY)
+      await db.tasks.update(task.id, { lastCompletedDate })
+    }
   })
 }
 

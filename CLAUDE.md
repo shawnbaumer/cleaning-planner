@@ -77,6 +77,32 @@ Defined in `src/lib/db.ts` as three Dexie (IndexedDB) tables:
   research-backed default frequencies/durations; no-ops if any room already
   exists
 
+## Product direction (beyond current build)
+
+Decisions made in planning that aren't built yet, kept here so they aren't
+lost between sessions:
+
+- **Design principle:** minimize time spent in the app itself — the point is
+  to spend time cleaning, not navigating a phone. Competitor research (Tody,
+  HomeRoutine, Spotless, OurHome, etc.) informed this: adopt Tody's glanceable
+  color-coded urgency and HomeRoutine's "focused time-boxed session" idea;
+  explicitly reject gamification (points, streaks, leaderboards, allowance
+  systems) as adding engagement overhead rather than speed.
+- **Milestone B — setup wizard:** instead of adding tasks one by one, let the
+  user pick their rooms (and quantity of each) plus a few toggles (has pets,
+  has plants, etc.), and auto-generate a starter task list from a built-in
+  suggestion library seeded with researched default frequencies/durations
+  (see `seedDatabase()` for the current starter set). Still fully editable
+  afterward.
+- **Milestone C — "give me X minutes":** user enters a time budget; the app
+  sorts due/overdue tasks by urgency and greedily fills the time budget using
+  `estimatedDurationMinutes`, surfacing which task(s) to do right now. No new
+  data-model fields needed — this reads directly off `percentDue` and
+  `estimatedDurationMinutes`, both already implemented.
+- **Milestone D (later/optional):** push notifications/reminders, per-plant
+  or per-furniture task customization, multi-device sync, sharing with
+  roommates.
+
 ## Status
 
 Single-screen UI built on top of the data layer (`src/App.tsx`): seeds the

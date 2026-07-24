@@ -70,6 +70,45 @@ export function msUntilDue(task: Task, now: Date = new Date()): number {
   return dueAt - now.getTime()
 }
 
+// A shared log-scale time axis used to position every task on the same due
+// timeline regardless of its frequencyDays, so bars are directly comparable
+// across tasks (see duePosition). Today = 0, and AXIS_ANCHOR_DAYS out lands
+// at AXIS_ANCHOR_FRACTION — chosen so short-term differences (hours, a day or
+// two) stay visually spread out while far-future dates compress toward 1.
+const AXIS_ANCHOR_DAYS = 14
+const AXIS_ANCHOR_FRACTION = 0.9
+const AXIS_LOG_DENOM = Math.log(1 + AXIS_ANCHOR_DAYS) / AXIS_ANCHOR_FRACTION
+
+/**
+ * Maps a number of days from now to a 0-1 fraction on the shared log-time
+ * axis: 0 = today (or already past), approaching 1 the further out. Days
+ * <= 0 are pinned to 0 rather than going negative, since the axis only
+ * represents time still to come.
+ */
+export function axisFrac(days: number): number {
+  if (days <= 0) return 0
+  return Math.min(1, Math.log(1 + days) / AXIS_LOG_DENOM)
+}
+
+/**
+ * A task's position on the shared due-time axis (see axisFrac), as a 0-1
+ * fraction: 0 when due or overdue (pinned to the "today" edge), approaching 1
+ * the further out its due date is.
+ */
+export function duePosition(task: Task, now: Date = new Date()): number {
+  return axisFrac(msUntilDue(task, now) / MS_PER_DAY)
+}
+
+export type UrgencyBand = 'fresh' | 'soon' | 'overdue'
+
+/** Which urgency band a task falls in, derived from percentDue. */
+export function urgencyBand(task: Task, now: Date = new Date()): UrgencyBand {
+  const percent = percentDue(task, now)
+  if (percent >= 100) return 'overdue'
+  if (percent >= 75) return 'soon'
+  return 'fresh'
+}
+
 /**
  * A short human label for a task's due status in whole days, e.g. "Due in 3
  * days", "Due today", or "Overdue by 2 days". Cleaning cadence is measured in
@@ -149,8 +188,9 @@ export async function logCompletion(
 
 /**
  * A compact due-status label for the card's title row in whole days, e.g.
- * "2d over" (overdue), "Today" (due now / never completed), or "3d" (upcoming).
- * Pairs with an urgency color chosen by the caller from percentDue.
+ * "2d over" (overdue), "Today" (due now / within half a day either way), or
+ * "3d" (upcoming). Pairs with an urgency color chosen by the caller from
+ * urgencyBand/percentDue.
  */
 export function formatDueShort(task: Task, now: Date = new Date()): string {
   const ms = msUntilDue(task, now)

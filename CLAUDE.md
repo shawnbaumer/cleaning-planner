@@ -79,8 +79,16 @@ Defined in `src/lib/db.ts` as three Dexie (IndexedDB) tables:
 - `formatTimeUntilDue(task)` / `formatOverdueShort(task)` — long/short due
   labels in whole days ("Due in 3 days", "2d"). Currently unused by the UI
   (kept for reuse); the card uses `formatDueShort` instead
-- `formatDueShort(task)` — compact due-status for the card's title row: "2d
-  over" (overdue), "Today" (due now / never completed), or "3d" (upcoming)
+- `formatDueShort(task)` — compact due-status for the card's title row in
+  whole days: "2d over" (overdue), "Today" (due now / within half a day
+  either way), or "3d" (upcoming)
+- `urgencyBand(task, now?)` — `'fresh' | 'soon' | 'overdue'`, derived from
+  `percentDue` (< 75 / >= 75 / >= 100); drives card tint and badge color
+- `axisFrac(days)` / `duePosition(task, now?)` — the shared log-time axis
+  used by every task's due-position bar (see Status below): `axisFrac` maps
+  a day offset to a 0-1 fraction (today = 0, 2 weeks ≈ 0.9, log-scaled so
+  near-term differences stay spread out); `duePosition` applies it to a
+  task's `msUntilDue`, clamped to 0 when due/overdue
 
 Task and room icons live in `src/lib/icons.tsx` (not `db.ts`): `taskIcon(name)`
 returns a keyword-inferred Lucide component, `roomIcon(type)` returns one per
@@ -122,23 +130,37 @@ Single-screen UI built on top of the data layer (`src/App.tsx`). A header
 `localStorage` under `cleaning-planner:viewMode`, defaulting to Urgency):
 
 - **Urgency (default)** — a single flat list of every task sorted most-urgent
-  first by `percentDue`, with a subtle room label under each task name for
+  first by `msUntilDue`, with a subtle room label under each task name for
   context. Truest to the glanceable-urgency design principle: the most overdue
   task in the whole apartment is always at the very top.
 - **Rooms** — tasks **grouped by room** under a header with a room-type icon
   (`roomIcon`); rooms are ordered by their most-urgent task and tasks within a
-  room are sorted most-urgent first. For batch-cleaning one room at a time.
+  room are sorted most-urgent first (both by `msUntilDue`). For batch-cleaning
+  one room at a time.
 
 Both views render identical **compact task cards** via a shared
 `renderTask(task, showRoomLabel)` helper (the room label shows only in Urgency
-view; the Rooms view's header already provides that context). Each card is a
+view; the Rooms view's header already provides that context), and share one
+**axis legend row** ("today · 1d · 1w · 2w") above the list. Each card is a
 tight layout: a monochrome Lucide task icon + name on the left, a right-aligned
-compact due status (`formatDueShort`: "2d over" / "Today" / "3d") colored by
-urgency (neutral → amber ≥75% → red overdue), and a thin `percentDue` progress
-bar (blue → amber ≥75% → red once overdue) below. In Urgency view a small muted
-room label (Lucide room icon + name) sits under the task name. "Mark done"
-reveals a row of duration chips (5/10/15/20/30 min, plus the task's current
-estimate) with the estimate pre-selected — confirming is one tap.
+compact due status (`formatDueShort`: "2d over" / "Today" / "3d") colored
+by `urgencyBand`, and a **due-position bar** below — not a percent-of-cycle
+progress bar. The bar's horizontal axis is a shared log-time scale
+(`axisFrac`/`duePosition`, see Helper functions above) identical across every
+task regardless of `frequencyDays`, so positions are directly comparable: a
+neutral dot marks the task's due date (pinned to the left "today" edge once
+overdue), with a runway fill from today to the dot when not yet due. This
+replaced an earlier design where the bar showed `percentDue` (proportion of
+the cleaning cycle elapsed) while the badge showed absolute days remaining —
+two different quantities that could disagree or even invert (e.g. a task due
+in 1 day showing an *emptier* bar than one due in 6 days, because their cycle
+lengths differed) and that clamped overdue fill at 100%, making 5%-overdue and
+300%-overdue look identical. The card's background is now tinted by
+`urgencyBand` (`fresh` green / `soon` amber / `overdue` red) so band is
+readable even at a glance, without relying on the bar. In Urgency view a small
+muted room label (Lucide room icon + name) sits under the task name. "Mark
+done" reveals a row of duration chips (5/10/15/20/30 min, plus the task's
+current estimate) with the estimate pre-selected — confirming is one tap.
 
 Dev helpers in `db.ts`: `randomizeTaskState()` scatters completion dates for
 testing, surfaced as a DEV-only 🎲 Randomize button in the header (hidden in

@@ -4,7 +4,10 @@ import {
   db,
   seedDatabase,
   logCompletion,
-  percentDue,
+  msUntilDue,
+  duePosition,
+  urgencyBand,
+  axisFrac,
   formatDueShort,
   randomizeTaskState,
   type Task,
@@ -13,6 +16,14 @@ import {
 import { roomIcon, taskIcon } from './lib/icons'
 
 const DURATION_PRESETS = [5, 10, 15, 20, 30]
+
+// Shared due-time axis ticks, positioned with the same axisFrac used by every
+// task's bar so the legend lines up with the bars underneath it.
+const AXIS_TICKS = [
+  { label: '1d', frac: axisFrac(1) },
+  { label: '1w', frac: axisFrac(7) },
+  { label: '2w', frac: axisFrac(14) },
+]
 
 type ViewMode = 'urgency' | 'room'
 const VIEW_MODE_KEY = 'cleaning-planner:viewMode'
@@ -57,7 +68,9 @@ function App() {
   const roomsById = new Map<number, Room>(rooms.map((room) => [room.id, room]))
 
   // Flat, most-urgent-first list of every task — the default glanceable view.
-  const sortedTasks = [...tasks].sort((a, b) => percentDue(b) - percentDue(a))
+  // Sorted by msUntilDue (most overdue → soonest due → furthest out) so list
+  // order always matches left-to-right position on the due-time axis bars.
+  const sortedTasks = [...tasks].sort((a, b) => msUntilDue(a) - msUntilDue(b))
 
   // Group tasks under their room, most-urgent task first within each room, and
   // float the room containing the most-urgent task to the top — so the list
@@ -67,10 +80,10 @@ function App() {
       room,
       tasks: tasks
         .filter((task) => task.roomId === room.id)
-        .sort((a, b) => percentDue(b) - percentDue(a)),
+        .sort((a, b) => msUntilDue(a) - msUntilDue(b)),
     }))
     .filter((group) => group.tasks.length > 0)
-    .sort((a, b) => percentDue(b.tasks[0]) - percentDue(a.tasks[0]))
+    .sort((a, b) => msUntilDue(a.tasks[0]) - msUntilDue(b.tasks[0]))
 
   const handleMarkDone = (task: Task) => {
     setExpandedTaskId(task.id)
@@ -94,9 +107,9 @@ function App() {
   // label (there's no room header to provide that context); in the grouped
   // view the room header already covers it, so it's omitted.
   const renderTask = (task: Task, showRoomLabel: boolean) => {
-    const percent = percentDue(task)
-    const overdue = percent >= 100
-    const nearDue = percent >= 75
+    const band = urgencyBand(task)
+    const overdue = band === 'overdue'
+    const pos = duePosition(task) * 100
     const isExpanded = expandedTaskId === task.id
     const room = roomsById.get(task.roomId)
     const Icon = taskIcon(task.name)
@@ -105,14 +118,22 @@ function App() {
       ...new Set([...DURATION_PRESETS, task.estimatedDurationMinutes]),
     ].sort((a, b) => a - b)
 
-    const statusColor = overdue
-      ? 'text-red-600 dark:text-red-400'
-      : nearDue
-        ? 'text-amber-600 dark:text-amber-500'
-        : 'text-neutral-400 dark:text-neutral-500'
+    const statusColor =
+      band === 'overdue'
+        ? 'text-red-600 dark:text-red-400'
+        : band === 'soon'
+          ? 'text-amber-600 dark:text-amber-500'
+          : 'text-neutral-400 dark:text-neutral-500'
+
+    const cardTint =
+      band === 'overdue'
+        ? 'bg-red-50 dark:bg-red-950/40'
+        : band === 'soon'
+          ? 'bg-amber-50 dark:bg-amber-950/40'
+          : 'bg-green-50 dark:bg-green-950/30'
 
     return (
-      <li key={task.id} className="rounded-xl bg-white p-3 shadow-sm dark:bg-neutral-900">
+      <li key={task.id} className={`rounded-xl p-3 shadow-sm ${cardTint}`}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2.5">
             <Icon
@@ -137,12 +158,24 @@ function App() {
           </span>
         </div>
 
-        <div className="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
+        <div className="relative mt-2.5 h-2 w-full rounded-full bg-neutral-200/80 dark:bg-neutral-800/80">
+          <div className="absolute inset-y-0 left-0 w-px bg-neutral-400 dark:bg-neutral-600" />
+          {AXIS_TICKS.map((tick) => (
+            <div
+              key={tick.label}
+              className="absolute inset-y-0 w-px bg-neutral-300 dark:bg-neutral-700"
+              style={{ left: `${tick.frac * 100}%` }}
+            />
+          ))}
+          {!overdue && (
+            <div
+              className="absolute inset-y-0 left-0 rounded-full bg-neutral-400/60 dark:bg-neutral-500/50"
+              style={{ width: `${pos}%` }}
+            />
+          )}
           <div
-            className={`h-full rounded-full transition-all ${
-              overdue ? 'bg-red-500' : nearDue ? 'bg-amber-500' : 'bg-blue-500'
-            }`}
-            style={{ width: `${Math.min(percent, 100)}%` }}
+            className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-neutral-700 dark:border-neutral-900 dark:bg-neutral-200"
+            style={{ left: `${overdue ? 0 : pos}%` }}
           />
         </div>
 
@@ -246,23 +279,44 @@ function App() {
           <p className="text-center text-sm text-neutral-400 dark:text-neutral-500">
             No tasks yet.
           </p>
-        ) : viewMode === 'urgency' ? (
-          <ul className="space-y-3">{sortedTasks.map((task) => renderTask(task, true))}</ul>
         ) : (
-          <div className="space-y-6">
-            {roomGroups.map(({ room, tasks: roomTasks }) => {
-              const RoomHeaderIcon = roomIcon(room.type)
-              return (
-                <section key={room.id}>
-                  <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-semibold text-neutral-500 dark:text-neutral-400">
-                    <RoomHeaderIcon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-                    {room.name}
-                  </h2>
-                  <ul className="space-y-3">{roomTasks.map((task) => renderTask(task, false))}</ul>
-                </section>
-              )
-            })}
-          </div>
+          <>
+            <div className="mb-2 px-3">
+              <div className="relative h-4 text-[11px] font-medium text-neutral-400 dark:text-neutral-500">
+                <span className="absolute left-0">today</span>
+                {AXIS_TICKS.map((tick) => (
+                  <span
+                    key={tick.label}
+                    className="absolute -translate-x-1/2"
+                    style={{ left: `${tick.frac * 100}%` }}
+                  >
+                    {tick.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {viewMode === 'urgency' ? (
+              <ul className="space-y-3">{sortedTasks.map((task) => renderTask(task, true))}</ul>
+            ) : (
+              <div className="space-y-6">
+                {roomGroups.map(({ room, tasks: roomTasks }) => {
+                  const RoomHeaderIcon = roomIcon(room.type)
+                  return (
+                    <section key={room.id}>
+                      <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-semibold text-neutral-500 dark:text-neutral-400">
+                        <RoomHeaderIcon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+                        {room.name}
+                      </h2>
+                      <ul className="space-y-3">
+                        {roomTasks.map((task) => renderTask(task, false))}
+                      </ul>
+                    </section>
+                  )
+                })}
+              </div>
+            )}
+          </>
         )}
       </main>
     </div>

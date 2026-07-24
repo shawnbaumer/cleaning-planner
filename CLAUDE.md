@@ -32,6 +32,8 @@ and what fits the time available.
 - **Dexie** — wrapper around IndexedDB for local data persistence
 - **dexie-react-hooks** — `useLiveQuery`, keeps the UI in sync with IndexedDB
   changes without manual refetching
+- **lucide-react** — monochrome line-icon set for task/room icons (stroke uses
+  `currentColor`, so icons inherit text color and adapt to dark mode)
 
 ## Folder structure
 
@@ -39,7 +41,8 @@ and what fits the time available.
 ├── public/              Static assets served as-is (favicon, etc.)
 ├── src/
 │   ├── lib/
-│   │   └── db.ts        Dexie database instance (IndexedDB schema lives here)
+│   │   ├── db.ts        Dexie database instance (IndexedDB schema lives here)
+│   │   └── icons.tsx    Keyword→Lucide icon mapping (taskIcon, roomIcon)
 │   ├── App.tsx           Root component
 │   ├── main.tsx          React entry point / DOM mount
 │   └── index.css         Tailwind entry point
@@ -73,6 +76,15 @@ Defined in `src/lib/db.ts` as three Dexie (IndexedDB) tables:
   `estimatedDurationMinutes` as the average of the task's last 5 logged
   durations, falling back to (leaving unchanged) the current estimate if
   there's no duration history yet
+- `formatTimeUntilDue(task)` / `formatOverdueShort(task)` — long/short due
+  labels in whole days ("Due in 3 days", "2d"). Currently unused by the UI
+  (kept for reuse); the card uses `formatDueShort` instead
+- `formatDueShort(task)` — compact due-status for the card's title row: "2d
+  over" (overdue), "Today" (due now / never completed), or "3d" (upcoming)
+
+Task and room icons live in `src/lib/icons.tsx` (not `db.ts`): `taskIcon(name)`
+returns a keyword-inferred Lucide component, `roomIcon(type)` returns one per
+room type. Both are monochrome and inherit text color.
 - `seedDatabase()` — populates a starter set of rooms and common tasks with
   research-backed default frequencies/durations; no-ops if any room already
   exists
@@ -105,15 +117,26 @@ lost between sessions:
 
 ## Status
 
-Single-screen UI built on top of the data layer (`src/App.tsx`). Tasks are
-**grouped by room** under a header with a room-type icon (`roomIcon`); rooms
-are ordered by their most-urgent task and tasks within a room are sorted
-most-urgent first, so the most pressing room floats to the top while staying
-glanceable. Each task shows a keyword-inferred emoji (`taskIcon`, e.g. 🪶 for
-dust), a `percentDue` progress bar (blue → amber ≥75% → red once overdue), and
-a due label. Due status is shown in **whole days only** (`formatTimeUntilDue`:
-"Due in 3 days" / "Due today" / "Overdue by 2 days"), and overdue tasks carry a
-compact corner badge ("Overdue · 2d" via `formatOverdueShort`). "Mark done"
+Single-screen UI built on top of the data layer (`src/App.tsx`). A header
+**segmented toggle switches between two main views** (`viewMode`, persisted to
+`localStorage` under `cleaning-planner:viewMode`, defaulting to Urgency):
+
+- **Urgency (default)** — a single flat list of every task sorted most-urgent
+  first by `percentDue`, with a subtle room label under each task name for
+  context. Truest to the glanceable-urgency design principle: the most overdue
+  task in the whole apartment is always at the very top.
+- **Rooms** — tasks **grouped by room** under a header with a room-type icon
+  (`roomIcon`); rooms are ordered by their most-urgent task and tasks within a
+  room are sorted most-urgent first. For batch-cleaning one room at a time.
+
+Both views render identical **compact task cards** via a shared
+`renderTask(task, showRoomLabel)` helper (the room label shows only in Urgency
+view; the Rooms view's header already provides that context). Each card is a
+tight layout: a monochrome Lucide task icon + name on the left, a right-aligned
+compact due status (`formatDueShort`: "2d over" / "Today" / "3d") colored by
+urgency (neutral → amber ≥75% → red overdue), and a thin `percentDue` progress
+bar (blue → amber ≥75% → red once overdue) below. In Urgency view a small muted
+room label (Lucide room icon + name) sits under the task name. "Mark done"
 reveals a row of duration chips (5/10/15/20/30 min, plus the task's current
 estimate) with the estimate pre-selected — confirming is one tap.
 
@@ -121,10 +144,11 @@ Dev helpers in `db.ts`: `randomizeTaskState()` scatters completion dates for
 testing, surfaced as a DEV-only 🎲 Randomize button in the header (hidden in
 production via `import.meta.env.DEV`).
 
-No add/edit-task screen or navigation yet. Note: task icons are inferred from
-the name rather than stored — an explicit per-task icon field may be worth
-adding once custom tasks exist. Next up: the "give me X minutes" suggestion
-feature.
+No add/edit-task screen or navigation yet — this is the biggest remaining gap
+in the "basics" (the app is read-only beyond marking done). Note: task icons are
+inferred from the name rather than stored — an explicit per-task icon field may
+be worth adding once custom tasks exist. Next up (still open): add/edit/delete
+tasks (CRUD), then the "give me X minutes" suggestion feature (Milestone C).
 
 ## Commands
 

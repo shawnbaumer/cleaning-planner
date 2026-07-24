@@ -147,42 +147,17 @@ export async function logCompletion(
   })
 }
 
-/** An emoji icon for a room, chosen by its type. */
-export function roomIcon(type: RoomType): string {
-  switch (type) {
-    case 'bedroom':
-      return '🛏️'
-    case 'bathroom':
-      return '🚿'
-    case 'kitchen':
-      return '🍳'
-    case 'living-room':
-      return '🛋️'
-    default:
-      return '🏠'
-  }
-}
-
 /**
- * An emoji icon inferred from a task's name by keyword — e.g. a feather duster
- * for "Dust". Falls back to a generic sponge so custom/unknown tasks still get
- * an icon. First match wins, so order the more specific keywords first.
+ * A compact due-status label for the card's title row in whole days, e.g.
+ * "2d over" (overdue), "Today" (due now / never completed), or "3d" (upcoming).
+ * Pairs with an urgency color chosen by the caller from percentDue.
  */
-export function taskIcon(name: string): string {
-  const n = name.toLowerCase()
-  if (n.includes('dust')) return '🪶'
-  if (n.includes('vacuum') || n.includes('sweep')) return '🧹'
-  if (n.includes('mop') || n.includes('floor')) return '🪣'
-  if (n.includes('sheet') || n.includes('bed') || n.includes('linen')) return '🛏️'
-  if (n.includes('window') || n.includes('glass') || n.includes('mirror')) return '🪟'
-  if (n.includes('bath') || n.includes('shower') || n.includes('toilet') || n.includes('sink'))
-    return '🚿'
-  if (n.includes('microwave') || n.includes('oven') || n.includes('fridge') || n.includes('dish'))
-    return '🍽️'
-  if (n.includes('trash') || n.includes('garbage') || n.includes('bin')) return '🗑️'
-  if (n.includes('laundry') || n.includes('wash')) return '🧺'
-  if (n.includes('counter') || n.includes('surface') || n.includes('wipe')) return '🧽'
-  return '🧽'
+export function formatDueShort(task: Task, now: Date = new Date()): string {
+  const ms = msUntilDue(task, now)
+  const days = Math.round(Math.abs(ms) / MS_PER_DAY)
+
+  if (days === 0) return 'Today'
+  return ms >= 0 ? `${days}d` : `${days}d over`
 }
 
 /**

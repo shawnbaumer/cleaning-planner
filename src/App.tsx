@@ -141,8 +141,10 @@ function App() {
     const sx = fillStartX(task)
     const sw = severeOverdue(task) ? 0.9 : 0.7
 
-    return (
-      <li key={task.id} className="rounded-xl bg-white p-3 shadow-sm dark:bg-neutral-900">
+    // Card face (icon + name + due status + drop bar) — shared between the
+    // collapsed tap target and the expanded panel so they stay identical.
+    const cardFace = (
+      <>
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2.5">
             <Icon
@@ -150,15 +152,15 @@ function App() {
               strokeWidth={2}
               aria-hidden="true"
             />
-            <div className="min-w-0">
-              <p className="truncate text-[15px] font-medium text-neutral-900 dark:text-neutral-100">
+            <div className="flex min-w-0 items-baseline gap-1.5">
+              <p className="min-w-0 flex-1 truncate text-left text-[15px] font-medium text-neutral-900 dark:text-neutral-100">
                 {task.name}
               </p>
               {showRoomLabel && room && RoomLabelIcon && (
-                <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-neutral-400 dark:text-neutral-500">
+                <span className="flex shrink-0 items-center gap-1 text-xs text-neutral-400 dark:text-neutral-500">
                   <RoomLabelIcon className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden="true" />
                   {room.name}
-                </p>
+                </span>
               )}
             </div>
           </div>
@@ -178,48 +180,60 @@ function App() {
           {/* cycle-state outline: thin, always visible (shows freshness when empty) */}
           <path d={path} fill="none" stroke={stroke} strokeWidth={sw} />
         </svg>
+      </>
+    )
 
+    return (
+      <li key={task.id} className="rounded-xl bg-white shadow-sm dark:bg-neutral-900">
         {!isExpanded ? (
+          // Whole card is the tap target — tapping opens the time-taken prompt.
           <button
             type="button"
             onClick={() => handleMarkDone(task)}
-            className="mt-3 w-full rounded-lg bg-blue-600 py-2 text-sm font-semibold text-white active:bg-blue-700"
+            aria-label={`Mark "${task.name}" done`}
+            className="block w-full rounded-xl p-3 active:bg-neutral-50 dark:active:bg-neutral-800"
           >
-            Mark done
+            {cardFace}
           </button>
         ) : (
-          <div className="mt-3 space-y-2">
-            <div className="flex flex-wrap gap-2">
-              {durationOptions.map((minutes) => (
+          <div className="p-3">
+            {cardFace}
+            <div className="mt-3 space-y-2">
+              <p className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
+                How long did it take?
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {durationOptions.map((minutes) => (
+                  <button
+                    key={minutes}
+                    type="button"
+                    onClick={() => setSelectedDuration(minutes)}
+                    className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                      selectedDuration === minutes
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300'
+                    }`}
+                  >
+                    {minutes} min{minutes === task.estimatedDurationMinutes ? ' •' : ''}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2">
                 <button
-                  key={minutes}
                   type="button"
-                  onClick={() => setSelectedDuration(minutes)}
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-                    selectedDuration === minutes
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300'
-                  }`}
+                  onClick={() => handleConfirm(task)}
+                  className="flex-1 rounded-lg bg-green-600 py-2 text-sm font-semibold text-white active:bg-green-700"
                 >
-                  {minutes} min{minutes === task.estimatedDurationMinutes ? ' •' : ''}
+                  Done ({selectedDuration} min)
                 </button>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => handleConfirm(task)}
-                className="flex-1 rounded-lg bg-green-600 py-2 text-sm font-semibold text-white active:bg-green-700"
-              >
-                Confirm ({selectedDuration} min)
-              </button>
-              <button
-                type="button"
-                onClick={handleCancel}
-                className="rounded-lg bg-neutral-200 px-4 py-2 text-sm font-semibold text-neutral-700 active:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-300"
-              >
-                Cancel
-              </button>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="rounded-lg bg-neutral-200 px-4 py-2 text-sm font-semibold text-neutral-700 active:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-300"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -70,14 +70,15 @@ export function msUntilDue(task: Task, now: Date = new Date()): number {
   return dueAt - now.getTime()
 }
 
-// A shared log-scale time axis used to position every task on the same due
-// timeline regardless of its frequencyDays, so bars are directly comparable
-// across tasks (see duePosition). Today = 0, and AXIS_ANCHOR_DAYS out lands
-// at AXIS_ANCHOR_FRACTION — chosen so short-term differences (hours, a day or
-// two) stay visually spread out while far-future dates compress toward 1.
-const AXIS_ANCHOR_DAYS = 14
-const AXIS_ANCHOR_FRACTION = 0.9
-const AXIS_LOG_DENOM = Math.log(1 + AXIS_ANCHOR_DAYS) / AXIS_ANCHOR_FRACTION
+// A shared log-scale time axis used to position every task's due-position and
+// drop geometry on the same timeline, in SVG viewBox units ("0 0 200 20") —
+// so every task's bar is directly comparable regardless of frequencyDays.
+// Today = 0, and 2 weeks out lands at 90% of the axis, log-scaled so
+// short-term differences (a day or two) stay visually spread out while
+// far-future dates compress toward the right edge.
+export const X0 = 6.5 // today / left-cap center
+export const X_RIGHT = 197.25 // axis right edge
+const AXIS_D = Math.log(15) / 0.9
 
 /**
  * Maps a number of days from now to a 0-1 fraction on the shared log-time
@@ -86,17 +87,87 @@ const AXIS_LOG_DENOM = Math.log(1 + AXIS_ANCHOR_DAYS) / AXIS_ANCHOR_FRACTION
  * represents time still to come.
  */
 export function axisFrac(days: number): number {
-  if (days <= 0) return 0
-  return Math.min(1, Math.log(1 + days) / AXIS_LOG_DENOM)
+  return days <= 0 ? 0 : Math.min(1, Math.log(1 + days) / AXIS_D)
+}
+
+/** Maps a 0-1 axis fraction to an x-coordinate in viewBox units. */
+export const axisX = (frac: number): number => X0 + frac * (X_RIGHT - X0)
+
+/**
+ * The outline path for a task's "drop" bar: widest at today, gentle
+ * half-strength log taper to a thin rounded tip at the task's own cycle
+ * length (frequencyDays), with rounded caps at both ends. A daily task is a
+ * short stub; a monthly one runs long — the drop's length encodes the
+ * task's own cadence, decoupled from how soon it's actually due.
+ */
+export function hornPath(cycleDays: number): string {
+  const H = 13
+  const k = 1.5
+  const cy = 10
+  const xMax = X_RIGHT
+  const R = H / 2
+  const N = 46
+  const xEnd = axisX(axisFrac(cycleDays))
+  const h = (x: number) => H * Math.exp((-k * (x - X0)) / (xMax - X0))
+  const rr = Math.max(1.1, h(xEnd) / 2)
+  const xB = xEnd - rr
+  const xs = Array.from({ length: N + 1 }, (_, i) => X0 + (xB - X0) * (i / N))
+
+  let d = `M ${X0.toFixed(1)} ${(cy - H / 2).toFixed(2)}`
+  for (const x of xs) d += ` L ${x.toFixed(1)} ${(cy - h(x) / 2).toFixed(2)}`
+  d += ` A ${rr.toFixed(2)} ${rr.toFixed(2)} 0 0 1 ${xB.toFixed(1)} ${(cy + h(xB) / 2).toFixed(2)}`
+  for (let i = xs.length - 1; i >= 0; i--)
+    d += ` L ${xs[i].toFixed(1)} ${(cy + h(xs[i]) / 2).toFixed(2)}`
+  d += ` A ${R} ${R} 0 0 1 ${X0.toFixed(1)} ${(cy - H / 2).toFixed(2)} Z`
+  return d
 }
 
 /**
- * A task's position on the shared due-time axis (see axisFrac), as a 0-1
- * fraction: 0 when due or overdue (pinned to the "today" edge), approaching 1
- * the further out its due date is.
+ * The left edge (viewBox x) of the time-until-due fill on a task's drop:
+ * pinned to 0 (the viewBox's left edge) once due/overdue — not X0 — because
+ * the drop's rounded left cap bulges out to x = X0 - H/2 = 0 (see hornPath),
+ * so anything short of the true viewBox edge clips off part of the cap and
+ * leaves a sliver unfilled even when the task is "fully" due. Moves right
+ * the further out the due date is. Clipping the drop path to
+ * [fillStartX, viewBox right edge] fills from today up to the due date.
  */
-export function duePosition(task: Task, now: Date = new Date()): number {
-  return axisFrac(msUntilDue(task, now) / MS_PER_DAY)
+export function fillStartX(task: Task, now: Date = new Date()): number {
+  const daysUntilDue = msUntilDue(task, now) / MS_PER_DAY
+  if (daysUntilDue <= 0) return 0
+  return axisX(axisFrac(daysUntilDue))
+}
+
+// Cycle-state color stops: green (just completed) -> yellow (approaching
+// due) -> red (overdue). Kept as raw RGB tuples so cycleColor/outlineColor
+// can interpolate between them.
+const GREEN = [94, 160, 46]
+const YELLOW = [224, 165, 0]
+const RED = [226, 75, 74]
+const toHex = (c: number[]) =>
+  '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')
+const mix = (a: number[], b: number[], t: number) => a.map((v, i) => v + (b[i] - v) * t)
+
+/** A task's cycle-state color: green -> yellow across the cycle, red once overdue. */
+export function cycleColor(task: Task, now: Date = new Date()): string {
+  const pd = percentDue(task, now)
+  if (pd >= 100) return toHex(RED)
+  return toHex(mix(GREEN, YELLOW, pd / 100))
+}
+
+/**
+ * A darker shade of cycleColor for the drop's outline, so the outline reads
+ * as "freshness" even when the time-until-due fill is empty (task is due
+ * far out, so the fill is a thin sliver near today).
+ */
+export function outlineColor(task: Task, now: Date = new Date()): string {
+  const pd = percentDue(task, now)
+  const base = pd >= 100 ? RED : mix(GREEN, YELLOW, pd / 100)
+  return toHex(mix(base, [0, 0, 0], 0.22))
+}
+
+/** True once a task is overdue by more than a whole cycle again (>= 200%). */
+export function severeOverdue(task: Task, now: Date = new Date()): boolean {
+  return percentDue(task, now) >= 200
 }
 
 export type UrgencyBand = 'fresh' | 'soon' | 'overdue'

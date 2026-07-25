@@ -5,9 +5,14 @@ import {
   seedDatabase,
   logCompletion,
   msUntilDue,
-  duePosition,
   urgencyBand,
   axisFrac,
+  axisX,
+  hornPath,
+  fillStartX,
+  cycleColor,
+  outlineColor,
+  severeOverdue,
   formatDueShort,
   randomizeTaskState,
   type Task,
@@ -17,12 +22,14 @@ import { roomIcon, taskIcon } from './lib/icons'
 
 const DURATION_PRESETS = [5, 10, 15, 20, 30]
 
-// Shared due-time axis ticks, positioned with the same axisFrac used by every
-// task's bar so the legend lines up with the bars underneath it.
+// Shared due-time axis ticks, positioned with the same axisX/axisFrac used by
+// every task's bar so the legend lines up with the bars underneath it. The
+// bar's SVG viewBox is "0 0 200 20", so a viewBox x maps to a % of width by
+// dividing by 200.
 const AXIS_TICKS = [
-  { label: '1d', frac: axisFrac(1) },
-  { label: '1w', frac: axisFrac(7) },
-  { label: '2w', frac: axisFrac(14) },
+  { label: '1d', percent: (axisX(axisFrac(1)) / 200) * 100 },
+  { label: '1w', percent: (axisX(axisFrac(7)) / 200) * 100 },
+  { label: '2w', percent: (axisX(axisFrac(14)) / 200) * 100 },
 ]
 
 type ViewMode = 'urgency' | 'room'
@@ -108,8 +115,6 @@ function App() {
   // view the room header already covers it, so it's omitted.
   const renderTask = (task: Task, showRoomLabel: boolean) => {
     const band = urgencyBand(task)
-    const overdue = band === 'overdue'
-    const pos = duePosition(task) * 100
     const isExpanded = expandedTaskId === task.id
     const room = roomsById.get(task.roomId)
     const Icon = taskIcon(task.name)
@@ -125,15 +130,19 @@ function App() {
           ? 'text-amber-600 dark:text-amber-500'
           : 'text-neutral-400 dark:text-neutral-500'
 
-    const cardTint =
-      band === 'overdue'
-        ? 'bg-red-50 dark:bg-red-950/40'
-        : band === 'soon'
-          ? 'bg-amber-50 dark:bg-amber-950/40'
-          : 'bg-green-50 dark:bg-green-950/30'
+    // "Drop" bar: outline length encodes the task's own cycle (frequencyDays,
+    // decoupled from urgency), fill length encodes absolute time-until-due on
+    // the shared log axis, and fill/outline color encode cycle-state
+    // (green -> yellow -> red). The outline alone (no card tint) is enough to
+    // read freshness even when the fill is empty.
+    const path = hornPath(task.frequencyDays)
+    const fill = cycleColor(task)
+    const stroke = outlineColor(task)
+    const sx = fillStartX(task)
+    const sw = severeOverdue(task) ? 0.9 : 0.7
 
     return (
-      <li key={task.id} className={`rounded-xl p-3 shadow-sm ${cardTint}`}>
+      <li key={task.id} className="rounded-xl bg-white p-3 shadow-sm dark:bg-neutral-900">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2.5">
             <Icon
@@ -158,26 +167,17 @@ function App() {
           </span>
         </div>
 
-        <div className="relative mt-2.5 h-2 w-full rounded-full bg-neutral-200/80 dark:bg-neutral-800/80">
-          <div className="absolute inset-y-0 left-0 w-px bg-neutral-400 dark:bg-neutral-600" />
-          {AXIS_TICKS.map((tick) => (
-            <div
-              key={tick.label}
-              className="absolute inset-y-0 w-px bg-neutral-300 dark:bg-neutral-700"
-              style={{ left: `${tick.frac * 100}%` }}
-            />
-          ))}
-          {!overdue && (
-            <div
-              className="absolute inset-y-0 left-0 rounded-full bg-neutral-400/60 dark:bg-neutral-500/50"
-              style={{ width: `${pos}%` }}
-            />
-          )}
-          <div
-            className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-neutral-700 dark:border-neutral-900 dark:bg-neutral-200"
-            style={{ left: `${overdue ? 0 : pos}%` }}
-          />
-        </div>
+        <svg viewBox="0 0 200 20" width="100%" className="mt-2.5 block">
+          <defs>
+            <clipPath id={`fill-${task.id}`}>
+              <rect x={sx} y={0} width={200} height={20} />
+            </clipPath>
+          </defs>
+          {/* time fill: solid, same color, right-anchored to the cycle end */}
+          <path d={path} fill={fill} clipPath={`url(#fill-${task.id})`} />
+          {/* cycle-state outline: thin, always visible (shows freshness when empty) */}
+          <path d={path} fill="none" stroke={stroke} strokeWidth={sw} />
+        </svg>
 
         {!isExpanded ? (
           <button
@@ -288,7 +288,7 @@ function App() {
                   <span
                     key={tick.label}
                     className="absolute -translate-x-1/2"
-                    style={{ left: `${tick.frac * 100}%` }}
+                    style={{ left: `${tick.percent}%` }}
                   >
                     {tick.label}
                   </span>

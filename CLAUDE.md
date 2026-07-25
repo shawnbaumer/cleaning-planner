@@ -83,12 +83,25 @@ Defined in `src/lib/db.ts` as three Dexie (IndexedDB) tables:
   whole days: "2d over" (overdue), "Today" (due now / within half a day
   either way), or "3d" (upcoming)
 - `urgencyBand(task, now?)` — `'fresh' | 'soon' | 'overdue'`, derived from
-  `percentDue` (< 75 / >= 75 / >= 100); drives card tint and badge color
-- `axisFrac(days)` / `duePosition(task, now?)` — the shared log-time axis
-  used by every task's due-position bar (see Status below): `axisFrac` maps
-  a day offset to a 0-1 fraction (today = 0, 2 weeks ≈ 0.9, log-scaled so
-  near-term differences stay spread out); `duePosition` applies it to a
-  task's `msUntilDue`, clamped to 0 when due/overdue
+  `percentDue` (< 75 / >= 75 / >= 100); drives the due-status badge color
+- `axisFrac(days)` / `axisX(frac)` — the shared log-time axis used by every
+  task's "drop" bar (see Status below), in the bar's `0 0 200 20` SVG
+  viewBox: `axisFrac` maps a day offset to a 0-1 fraction (today = 0, 2 weeks
+  ≈ 0.9, log-scaled so near-term differences stay spread out); `axisX` maps
+  that fraction to a viewBox x-coordinate
+- `hornPath(cycleDays)` — the SVG outline path for a task's drop: widest at
+  today, log-tapered to a thin rounded tip at `cycleDays` out on the shared
+  axis, rounded caps at both ends. Length encodes the task's own cadence
+  (`frequencyDays`), independent of how soon it's actually due
+- `fillStartX(task, now?)` — the viewBox x where a task's time-until-due fill
+  begins (pinned to `X0`, the "today" edge, once due/overdue); the fill runs
+  from there to the drop's right edge, clipped to the drop's outline
+- `cycleColor(task, now?)` / `outlineColor(task, now?)` — cycle-state color
+  (green → yellow across the cycle, red once overdue) for the fill and a
+  ~20%-darkened outline shade, so the outline reads as freshness even when
+  the fill is empty
+- `severeOverdue(task, now?)` — `percentDue(task) >= 200` (overdue by more
+  than a full cycle again); thickens the outline stroke
 
 Task and room icons live in `src/lib/icons.tsx` (not `db.ts`): `taskIcon(name)`
 returns a keyword-inferred Lucide component, `roomIcon(type)` returns one per
@@ -141,23 +154,28 @@ Single-screen UI built on top of the data layer (`src/App.tsx`). A header
 Both views render identical **compact task cards** via a shared
 `renderTask(task, showRoomLabel)` helper (the room label shows only in Urgency
 view; the Rooms view's header already provides that context), and share one
-**axis legend row** ("today · 1d · 1w · 2w") above the list. Each card is a
+**axis legend row** ("today · 1d · 1w · 2w") above the list, inset to match
+the cards' padding so its ticks line up with the bars below. Each card is a
 tight layout: a monochrome Lucide task icon + name on the left, a right-aligned
-compact due status (`formatDueShort`: "2d over" / "Today" / "3d") colored
-by `urgencyBand`, and a **due-position bar** below — not a percent-of-cycle
-progress bar. The bar's horizontal axis is a shared log-time scale
-(`axisFrac`/`duePosition`, see Helper functions above) identical across every
-task regardless of `frequencyDays`, so positions are directly comparable: a
-neutral dot marks the task's due date (pinned to the left "today" edge once
-overdue), with a runway fill from today to the dot when not yet due. This
-replaced an earlier design where the bar showed `percentDue` (proportion of
-the cleaning cycle elapsed) while the badge showed absolute days remaining —
-two different quantities that could disagree or even invert (e.g. a task due
-in 1 day showing an *emptier* bar than one due in 6 days, because their cycle
-lengths differed) and that clamped overdue fill at 100%, making 5%-overdue and
-300%-overdue look identical. The card's background is now tinted by
-`urgencyBand` (`fresh` green / `soon` amber / `overdue` red) so band is
-readable even at a glance, without relying on the bar. In Urgency view a small
+compact due status (`formatDueShort`: "2d over" / "Today" / "3d") colored by
+`urgencyBand`, and an SVG **"drop" bar** below — two decoupled encodings on
+one shape, replacing an earlier single-quantity progress bar (see git history
+for that iteration and the percent-of-cycle design before it):
+- **Drop length** (`hornPath`) is the task's own cycle (`frequencyDays`) on
+  the shared log-time axis — a daily task is a short stub, a monthly one runs
+  long. This is fixed per task, independent of urgency.
+- **Fill length** (`fillStartX`, clipped to the drop) is absolute
+  time-until-due on that same axis, right-anchored to the drop's end and
+  pinned to the left "today" edge once overdue — so fill length is directly
+  comparable across tasks regardless of cadence.
+- **Fill/outline color** (`cycleColor`/`outlineColor`) encodes cycle state:
+  green → yellow across the cycle, red once overdue, with the darker outline
+  always visible (even when the fill is a thin sliver) so freshness reads at
+  a glance. `severeOverdue` (>= 200%) thickens the outline further.
+
+Cards have no background tint — color is treated as an enhancement, not the
+only signal: fill length, outline shape, list sort order, and the day badge
+text are all designed to stay legible in grayscale. In Urgency view a small
 muted room label (Lucide room icon + name) sits under the task name. "Mark
 done" reveals a row of duration chips (5/10/15/20/30 min, plus the task's
 current estimate) with the estimate pre-selected — confirming is one tap.

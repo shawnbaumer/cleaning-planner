@@ -1,1 +1,46 @@
 @import "tailwindcss";
+
+/* Reset-animation blink: the drop's outline flashes green once after a task is
+   completed, for a positive "fresh again" feel. Applied to an extra overlaid
+   green outline path that fades in and back out. */
+@keyframes reset-blink {
+  0% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.reset-blink {
+  animation: reset-blink 0.6s ease-out forwards;
+}
+
+/* The interaction panel that appears on top of a tile pops in gently when it
+   opens, giving the tap a modern selected-and-lifted feel. */
+@keyframes panel-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.panel-pop {
+  animation: panel-pop 0.14s ease-out;
+  transform-origin: top center;
+}
+
+/* iOS-style duration wheel: hide the scrollbar so it reads as a picker, not a
+   scroll list. */
+.wheel-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.wheel-scroll::-webkit-scrollbar {
+  display: none;
+}

@@ -93,9 +93,20 @@ Defined in `src/lib/db.ts` as three Dexie (IndexedDB) tables:
   today, log-tapered to a thin rounded tip at `cycleDays` out on the shared
   axis, rounded caps at both ends. Length encodes the task's own cadence
   (`frequencyDays`), independent of how soon it's actually due
+- `notchTicks(cycleDays)` — positions for the drop's built-in day ruler: for
+  each ruler day (1–7) that lands on the drop's straight body (not its tapered
+  tip), returns the viewBox `x`, the drop's `half`-height there (so a tick can
+  be centered on the top/bottom outline, straddling the drop line), and a
+  `fade` weight (1 at today → 0 by a week) the card uses to scale each notch's
+  length, stroke width, and opacity — bold near today, invisible by ~1 week.
+  Shares `hornPath`'s geometry. A daily task gets none; a weekly one gets 1–6d
+  (7d is its tip); a monthly one gets the full 1–7d fade
 - `fillStartX(task, now?)` — the viewBox x where a task's time-until-due fill
   begins (pinned to `X0`, the "today" edge, once due/overdue); the fill runs
-  from there to the drop's right edge, clipped to the drop's outline
+  from there to the drop's right edge, clipped to the drop's outline.
+  Time-until-due is quantized to whole days (rounded, matching
+  `formatDueShort`) before positioning, so every task "due in 1 day" lands at
+  the same axis level regardless of the hours remaining
 - `cycleColor(task, now?)` / `outlineColor(task, now?)` — cycle-state color
   (green → yellow across the cycle, red once overdue) for the fill and a
   ~20%-darkened outline shade, so the outline reads as freshness even when
@@ -154,7 +165,7 @@ Single-screen UI built on top of the data layer (`src/App.tsx`). A header
 Both views render identical **compact task cards** via a shared
 `renderTask(task, showRoomLabel)` helper (the room label shows only in Urgency
 view; the Rooms view's header already provides that context), and share one
-**axis legend row** ("today · 1d · 1w · 2w") above the list, inset to match
+**axis legend row** ("today · 1d · 3d · 1w · 2w") above the list, inset to match
 the cards' padding so its ticks line up with the bars below. Each card is a
 tight layout: a monochrome Lucide task icon + name on the left, a right-aligned
 compact due status (`formatDueShort`: "2d over" / "Today" / "3d") colored by
@@ -176,9 +187,30 @@ for that iteration and the percent-of-cycle design before it):
 Cards have no background tint — color is treated as an enhancement, not the
 only signal: fill length, outline shape, list sort order, and the day badge
 text are all designed to stay legible in grayscale. In Urgency view a small
-muted room label (Lucide room icon + name) sits under the task name. "Mark
-done" reveals a row of duration chips (5/10/15/20/30 min, plus the task's
-current estimate) with the estimate pre-selected — confirming is one tap.
+muted room label (Lucide room icon + name) sits under the task name.
+
+**Completion interaction** (in `App.tsx`'s `TaskCard` component): tapping a
+card gives a small press animation (`active:scale`), then blurs the tile in
+place and floats a **Start / Complete** prompt on top of it (`panel-pop`,
+absolute-positioned so siblings don't reflow; the active `<li>` gets `z-30`).
+There's no Cancel button — a `fixed inset-0` backdrop dismisses the panel when
+you tap anywhere outside the tile. The two paths:
+- **Start** — runs a minutes-only stopwatch (big elapsed-minute count, pulsing
+  dot, no seconds) in a solid lifted panel. **Done** rounds elapsed time to the
+  nearest 5 min (floor 5) and logs it.
+- **Complete** — opens an iOS-timer-style scroll-snap **`WheelPicker`** in
+  5-min increments (5–90), defaulting to `estimatedDurationMinutes` snapped to
+  the nearest 5; the centered (selected) value is enlarged/bolded so the
+  current pick stays legible. **Done** logs the selected value.
+
+Both paths then play a **reset animation** (see `playReset`): the drop's
+time-fill drains left→right to empty via `requestAnimationFrame` (captures the
+pre-completion fill start + colors so it animates from the old state before the
+live query refreshes the now-fresh task), then the outline blinks green once
+(`reset-blink` CSS keyframe on an overlaid green outline path) for a positive
+freshness feel. App-level `activeTaskId` ensures only one card's panel is open
+at a time. CSS keyframes (`reset-blink`, `panel-pop`) and the wheel's
+scrollbar-hiding live in `src/index.css`.
 
 Dev helpers in `db.ts`: `randomizeTaskState()` scatters completion dates for
 testing, surfaced as a DEV-only 🎲 Randomize button in the header (hidden in

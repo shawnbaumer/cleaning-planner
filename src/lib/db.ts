@@ -74,11 +74,14 @@ export function msUntilDue(task: Task, now: Date = new Date()): number {
 // drop geometry on the same timeline, in SVG viewBox units ("0 0 200 20") —
 // so every task's bar is directly comparable regardless of frequencyDays.
 // Today = 0, and 2 weeks out lands at 90% of the axis, log-scaled so
-// short-term differences (a day or two) stay visually spread out while
-// far-future dates compress toward the right edge.
+// short-term differences stay visually spread out while far-future dates
+// compress toward the right edge. AXIS_S softens the near-term spread: a
+// larger value pulls today and 1d closer together (and eases the 1d–1w run)
+// while keeping the log feel further out.
 export const X0 = 6.5 // today / left-cap center
 export const X_RIGHT = 197.25 // axis right edge
-const AXIS_D = Math.log(15) / 0.9
+const AXIS_S = 2 // near-term softening scale
+const AXIS_D = Math.log(1 + 14 / AXIS_S) / 0.9 // 2 weeks -> 0.9
 
 /**
  * Maps a number of days from now to a 0-1 fraction on the shared log-time
@@ -87,7 +90,7 @@ const AXIS_D = Math.log(15) / 0.9
  * represents time still to come.
  */
 export function axisFrac(days: number): number {
-  return days <= 0 ? 0 : Math.min(1, Math.log(1 + days) / AXIS_D)
+  return days <= 0 ? 0 : Math.min(1, Math.log(1 + days / AXIS_S) / AXIS_D)
 }
 
 /** Maps a 0-1 axis fraction to an x-coordinate in viewBox units. */
@@ -122,6 +125,43 @@ export function hornPath(cycleDays: number): string {
   return d
 }
 
+// Day marks drawn onto every drop as a built-in ruler: one per day through the
+// first week. Reading a bar's filled tip against these tells you how many days
+// until due without leaving the row. `fade` (1 at today → 0 at a week) lets the
+// caller scale each notch's size/strength down as the drop thins, so the ruler
+// is bold near today and fades out by ~1 week.
+const NOTCH_DAYS = [1, 2, 3, 4, 5, 6, 7]
+const NOTCH_LAST = NOTCH_DAYS[NOTCH_DAYS.length - 1]
+
+/**
+ * Positions for the ruler notches on a task's drop, given its cycle length.
+ * Returns, for each ruler day that lands on the drop's straight body (not out
+ * on its rounded tip), the x-coordinate, the drop's half-height there (so a
+ * tick can be centered on the top and bottom outline), and a `fade` weight
+ * (1 near today → 0 by a week out). Uses the same geometry (H, k, cy = 10) as
+ * `hornPath`.
+ */
+export function notchTicks(
+  cycleDays: number,
+): Array<{ x: number; half: number; fade: number }> {
+  const H = 13
+  const k = 1.5
+  const xMax = X_RIGHT
+  const h = (x: number) => H * Math.exp((-k * (x - X0)) / (xMax - X0))
+  const xEnd = axisX(axisFrac(cycleDays))
+  const rr = Math.max(1.1, h(xEnd) / 2)
+
+  const ticks: Array<{ x: number; half: number; fade: number }> = []
+  for (const day of NOTCH_DAYS) {
+    const x = axisX(axisFrac(day))
+    // Stop before the tapered tip so notches sit on the readable body only.
+    if (x > xEnd - rr - 0.5) break
+    const fade = Math.max(0, Math.min(1, 1 - (day - 1) / (NOTCH_LAST - 1)))
+    ticks.push({ x, half: h(x) / 2, fade })
+  }
+  return ticks
+}
+
 /**
  * The left edge (viewBox x) of the time-until-due fill on a task's drop:
  * pinned to 0 (the viewBox's left edge) once due/overdue — not X0 — because
@@ -130,11 +170,19 @@ export function hornPath(cycleDays: number): string {
  * leaves a sliver unfilled even when the task is "fully" due. Moves right
  * the further out the due date is. Clipping the drop path to
  * [fillStartX, viewBox right edge] fills from today up to the due date.
+ *
+ * Time-until-due is quantized to whole days (rounded, matching
+ * formatDueShort's badge) before positioning: cleaning cadence is measured in
+ * days, so every task "due in 1 day" lands at the exact same axis level
+ * regardless of how many hours actually remain, and the fill position always
+ * agrees with the day label on the card.
  */
 export function fillStartX(task: Task, now: Date = new Date()): number {
-  const daysUntilDue = msUntilDue(task, now) / MS_PER_DAY
-  if (daysUntilDue <= 0) return 0
-  return axisX(axisFrac(daysUntilDue))
+  const msUntil = msUntilDue(task, now)
+  if (msUntil <= 0) return 0
+  const days = Math.round(msUntil / MS_PER_DAY)
+  if (days <= 0) return 0
+  return axisX(axisFrac(days))
 }
 
 // Cycle-state color stops: green (just completed) -> yellow (approaching
@@ -147,11 +195,17 @@ const toHex = (c: number[]) =>
   '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')
 const mix = (a: number[], b: number[], t: number) => a.map((v, i) => v + (b[i] - v) * t)
 
-/** A task's cycle-state color: green -> yellow across the cycle, red once overdue. */
+/**
+ * A task's cycle-state color: green -> yellow across the cycle, red once
+ * *strictly past* due. Red is reserved for genuinely overdue tasks (pd > 100),
+ * so a task sitting exactly at its due moment — or one that's never been
+ * completed (percentDue returns 100 for those) — reads as maximally-urgent
+ * yellow rather than overdue-red.
+ */
 export function cycleColor(task: Task, now: Date = new Date()): string {
   const pd = percentDue(task, now)
-  if (pd >= 100) return toHex(RED)
-  return toHex(mix(GREEN, YELLOW, pd / 100))
+  if (pd > 100) return toHex(RED)
+  return toHex(mix(GREEN, YELLOW, Math.min(1, pd / 100)))
 }
 
 /**
@@ -161,7 +215,7 @@ export function cycleColor(task: Task, now: Date = new Date()): string {
  */
 export function outlineColor(task: Task, now: Date = new Date()): string {
   const pd = percentDue(task, now)
-  const base = pd >= 100 ? RED : mix(GREEN, YELLOW, pd / 100)
+  const base = pd > 100 ? RED : mix(GREEN, YELLOW, Math.min(1, pd / 100))
   return toHex(mix(base, [0, 0, 0], 0.22))
 }
 
@@ -172,10 +226,15 @@ export function severeOverdue(task: Task, now: Date = new Date()): boolean {
 
 export type UrgencyBand = 'fresh' | 'soon' | 'overdue'
 
-/** Which urgency band a task falls in, derived from percentDue. */
+/**
+ * Which urgency band a task falls in, derived from percentDue. 'overdue'
+ * (which drives the red badge color) is reserved for tasks that are *strictly
+ * past* due (pd > 100), matching cycleColor — a never-completed or exactly-due
+ * task is 'soon', not overdue.
+ */
 export function urgencyBand(task: Task, now: Date = new Date()): UrgencyBand {
   const percent = percentDue(task, now)
-  if (percent >= 100) return 'overdue'
+  if (percent > 100) return 'overdue'
   if (percent >= 75) return 'soon'
   return 'fresh'
 }

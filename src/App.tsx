@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   db,
@@ -47,6 +47,69 @@ function loadViewMode(): ViewMode {
   }
 }
 
+const FLIP_DURATION_MS = 550
+const FLIP_EASING = 'cubic-bezier(0.25, 0.8, 0.25, 1)'
+
+/**
+ * Dependency-free FLIP (First-Last-Invert-Play) list reorder: whenever a
+ * task's `<li>` moves between renders (a completion, or randomize, re-sorts
+ * the list), it glides to its new spot instead of jumping. Compares
+ * `offsetTop` (not `getBoundingClientRect`, which would be thrown off by
+ * scroll position) captured on the *previous* render against the current
+ * one, then plays the delta back as a transform that eases to zero.
+ *
+ * Suppressed across a `viewMode` change (Urgency ↔ Rooms) — that's a
+ * different list shape, not a reorder, so the previous-position map is
+ * dropped instead of diffed. Only applies to each task's own `<li>`; a
+ * room *section* reordering in Rooms view is not animated (its header/list
+ * wrapper isn't tracked here) — see CLAUDE.md.
+ */
+function useFlip(viewMode: ViewMode) {
+  const elsRef = useRef(new Map<number, HTMLElement>())
+  const prevTopsRef = useRef(new Map<number, number>())
+  const prevViewModeRef = useRef(viewMode)
+
+  useLayoutEffect(() => {
+    const viewChanged = prevViewModeRef.current !== viewMode
+    prevViewModeRef.current = viewMode
+    if (viewChanged) prevTopsRef.current.clear()
+
+    const moves: Array<[HTMLElement, number]> = []
+    elsRef.current.forEach((el, id) => {
+      const top = el.offsetTop
+      const old = prevTopsRef.current.get(id)
+      if (!viewChanged && old !== undefined && Math.abs(old - top) > 1) {
+        moves.push([el, old - top])
+      }
+      prevTopsRef.current.set(id, top)
+    })
+    if (moves.length === 0) return
+
+    moves.forEach(([el, dy]) => {
+      el.style.transition = 'none'
+      el.style.transform = `translateY(${dy}px)`
+    })
+    void document.body.offsetHeight // force reflow so the jump above commits before easing back
+    moves.forEach(([el]) => {
+      el.style.transition = `transform ${FLIP_DURATION_MS}ms ${FLIP_EASING}`
+      el.style.transform = ''
+      el.addEventListener(
+        'transitionend',
+        () => {
+          el.style.transition = ''
+          el.style.transform = ''
+        },
+        { once: true },
+      )
+    })
+  })
+
+  return (id: number) => (el: HTMLElement | null) => {
+    if (el) elsRef.current.set(id, el)
+    else elsRef.current.delete(id)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Duration wheel (iOS-timer-style scroll picker)
 // ---------------------------------------------------------------------------
@@ -72,14 +135,9 @@ function WheelPicker({
   const ref = useRef<HTMLDivElement>(null)
   const pad = (WHEEL_VISIBLE - 1) / 2
 
-  // Center the initial value on mount. Runs once — afterward the user drives
-  // scroll position directly.
-  useEffect(() => {
-    const idx = Math.max(0, values.indexOf(value))
-    if (ref.current) ref.current.scrollTop = idx * WHEEL_ITEM_H
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
+  // Reconcile the highlighted/reported value from wherever the wheel is
+  // actually scrolled to — used both live (onScroll) and to settle the
+  // initial centering below, so the centered row and `value` never disagree.
   const handleScroll = () => {
     const el = ref.current
     if (!el) return
@@ -90,6 +148,25 @@ function WheelPicker({
     const next = values[idx]
     if (next !== value) onChange(next)
   }
+
+  // Center the initial value on mount. Runs once — afterward the user drives
+  // scroll position directly. Uses useLayoutEffect (not useEffect) so the
+  // assignment happens before paint, and re-asserts it in a rAF because the
+  // surrounding panel is still settling its `panel-pop` layout at mount time,
+  // which can otherwise clamp scrollTop back to 0. Reconciling afterward
+  // guarantees the visually centered row matches `value`.
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const idx = Math.max(0, values.indexOf(value))
+    el.scrollTop = idx * WHEEL_ITEM_H
+    const raf = requestAnimationFrame(() => {
+      el.scrollTop = idx * WHEEL_ITEM_H
+      handleScroll()
+    })
+    return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="relative" style={{ height: WHEEL_ITEM_H * WHEEL_VISIBLE }}>
@@ -102,7 +179,7 @@ function WheelPicker({
       <div
         ref={ref}
         onScroll={handleScroll}
-        className="wheel-scroll h-full snap-y snap-mandatory overflow-y-scroll"
+        className="wheel-scroll relative h-full snap-y snap-mandatory overflow-y-scroll"
       >
         <div style={{ height: WHEEL_ITEM_H * pad }} />
         {values.map((v) => {
@@ -140,16 +217,48 @@ function WheelPicker({
 // ---------------------------------------------------------------------------
 
 type Interaction = 'idle' | 'prompt' | 'stopwatch' | 'wheel'
-type ResetAnim = { phase: 'drain' | 'blink'; color: string; stroke: string }
+// 'settled' holds the animation's captured fresh-green state after the
+// blinks finish, so the card doesn't flash back to its old (e.g. overdue)
+// live state in the gap before the DB write lands and the live query
+// refreshes `task`.
+type ResetAnim = { phase: 'drain' | 'blink' | 'settled'; color: string; stroke: string }
 
+// The reset animation's drain target: the fresh (just-completed) cycle-state
+// colors, i.e. cycleColor/outlineColor at 0% due. Matches db.ts's GREEN color
+// stop and outlineColor's 22%-toward-black darkening formula, so the drain's
+// end color agrees exactly with the card's actual fresh-state colors.
+const FRESH_GREEN: [number, number, number] = [94, 160, 46] // #5ea02e
+const FRESH_GREEN_OUTLINE: [number, number, number] = [73, 125, 36] // #497d24
 const RESET_GREEN = '#22c55e'
+const DRAIN_DURATION_MS = 1400
+const BLINK_ITERATION_MS = 380
+const BLINK_ITERATIONS = 3
+// Beat between the last blink and the deferred DB write, so the write (and
+// the list re-sort it triggers) lands a moment after the animation visually
+// finishes rather than right on its last frame.
+const BEAT_MS = 200
+// Safety net: if the live query never reflects the write (e.g. it failed),
+// stop holding the settled state open forever.
+const SETTLE_FALLBACK_MS = 2000
+
+const hexToRgb = (hex: string): [number, number, number] => {
+  const n = parseInt(hex.slice(1), 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+const rgbToHex = (c: readonly number[]) =>
+  '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')
+const mixRgb = (
+  a: readonly number[],
+  b: readonly number[],
+  t: number,
+): number[] => a.map((v, i) => v + (b[i] - v) * t)
 
 /**
  * A single task card. Collapsed, the whole tile is a tap target. Tapping lifts
  * a panel on top of the tile offering Start (run a stopwatch) or Complete (pick
  * a duration on a wheel). Either path logs the completion and plays a reset
  * animation: the drop's time-fill drains out to the right, then its outline
- * blinks green once.
+ * blinks green three times.
  */
 function TaskCard({
   task,
@@ -158,6 +267,7 @@ function TaskCard({
   isActive,
   onActivate,
   onClose,
+  flipRef,
 }: {
   task: Task
   room: Room | undefined
@@ -165,6 +275,7 @@ function TaskCard({
   isActive: boolean
   onActivate: () => void
   onClose: () => void
+  flipRef: (el: HTMLLIElement | null) => void
 }) {
   const [mode, setMode] = useState<Interaction>('idle')
 
@@ -179,6 +290,12 @@ function TaskCard({
   const [anim, setAnim] = useState<ResetAnim | null>(null)
   const [drainX, setDrainX] = useState(0)
   const rafRef = useRef<number | null>(null)
+  const timeoutsRef = useRef<number[]>([])
+  // logCompletion is deferred until after the full drain+blink animation (see
+  // playReset). These track that pending write so it still fires exactly
+  // once even if the card unmounts mid-animation (e.g. a view toggle).
+  const pendingCompleteRef = useRef<{ minutes: number } | null>(null)
+  const loggedRef = useRef(false)
 
   // Collapse this card's interaction if another card becomes the active one.
   // Never interrupts an in-flight reset animation (that lives in `anim`).
@@ -190,21 +307,49 @@ function TaskCard({
     }
   }, [isActive])
 
-  // Tick the stopwatch once a second while it's running.
+  // Tick the stopwatch frequently enough that the seconds display never
+  // visibly skips. Elapsed time is always recomputed from swStartRef, not
+  // accumulated per tick, so drift can't creep in between ticks.
   useEffect(() => {
     if (mode !== 'stopwatch' || swStartRef.current === null) return
     const id = window.setInterval(() => {
       if (swStartRef.current !== null) setElapsedMs(Date.now() - swStartRef.current)
-    }, 1000)
+    }, 300)
     return () => window.clearInterval(id)
   }, [mode])
 
-  // Clean up a running rAF on unmount.
+  // Clean up a running rAF and any pending timeouts on unmount. If the reset
+  // animation was interrupted before the deferred logCompletion fired (at any
+  // point through drain, blink, or the beat before the write), the
+  // completion must still be logged — fire it here so the write is never
+  // lost.
   useEffect(() => {
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+      timeoutsRef.current.forEach((id) => window.clearTimeout(id))
+      timeoutsRef.current = []
+      if (pendingCompleteRef.current && !loggedRef.current) {
+        loggedRef.current = true
+        void logCompletion(task.id, {
+          actualDurationMinutes: pendingCompleteRef.current.minutes,
+        })
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Once the deferred write actually lands — i.e. the live query refreshes
+  // this task and its lastCompletedDate changes — clear the settled anim so
+  // the card switches over to its real live (fresh) state. Watching the prop
+  // rather than using a timer keeps this deterministic; SETTLE_FALLBACK_MS in
+  // playReset is just a safety net in case the write never lands.
+  const prevCompletedRef = useRef(task.lastCompletedDate)
+  useEffect(() => {
+    if (task.lastCompletedDate !== prevCompletedRef.current) {
+      prevCompletedRef.current = task.lastCompletedDate
+      setAnim(null)
+    }
+  }, [task.lastCompletedDate])
 
   const openPrompt = () => {
     onActivate()
@@ -236,12 +381,20 @@ function TaskCard({
     setMode('wheel')
   }
 
-  // Plays the drain-then-blink reset. Captures the drop's current fill/colors
-  // *before* the DB update lands (logCompletion makes the task fresh), then
-  // animates from that captured state so the fill visibly empties out.
-  const playReset = () => {
-    const color = cycleColor(task)
-    const stroke = outlineColor(task)
+  // Plays the drain-then-blink reset, in place, before anything moves.
+  // Captures the drop's current fill/colors *before* the DB update lands,
+  // then animates from that captured state so the fill visibly empties out
+  // and its color cools to fresh-state green — isolated from the live
+  // query's refresh of the now-fresh task. Sequence: drain (~1.4s) → 3
+  // blinks in place → a short beat → the deferred DB write lands (only then
+  // does the list re-sort/glide — see useFlip). `anim` stays non-null
+  // (phase 'settled') through the beat and past the write so the card never
+  // flashes back to its old live state in the gap before the live query
+  // catches up; the lastCompletedDate-watching effect above clears it once
+  // that actually happens.
+  const playReset = (minutes: number) => {
+    const startColor = hexToRgb(cycleColor(task))
+    const startStroke = hexToRgb(outlineColor(task))
     const startSx = fillStartX(task)
 
     setMode('idle')
@@ -249,30 +402,54 @@ function TaskCard({
     setElapsedMs(0)
     onClose()
 
-    setAnim({ phase: 'drain', color, stroke })
+    pendingCompleteRef.current = { minutes }
+    loggedRef.current = false
+
+    setAnim({ phase: 'drain', color: rgbToHex(startColor), stroke: rgbToHex(startStroke) })
     setDrainX(startSx)
 
     const t0 = performance.now()
-    const dur = 480
     const step = (t: number) => {
-      const p = Math.min(1, (t - t0) / dur)
+      const p = Math.min(1, (t - t0) / DRAIN_DURATION_MS)
       const eased = 1 - Math.pow(1 - p, 3) // easeOutCubic
       setDrainX(startSx + (200 - startSx) * eased)
+      setAnim({
+        phase: 'drain',
+        color: rgbToHex(mixRgb(startColor, FRESH_GREEN, eased)),
+        stroke: rgbToHex(mixRgb(startStroke, FRESH_GREEN_OUTLINE, eased)),
+      })
       if (p < 1) {
         rafRef.current = requestAnimationFrame(step)
       } else {
         rafRef.current = null
-        setAnim({ phase: 'blink', color, stroke })
-        window.setTimeout(() => setAnim(null), 620)
+        const freshColor = rgbToHex(FRESH_GREEN)
+        const freshStroke = rgbToHex(FRESH_GREEN_OUTLINE)
+        setAnim({ phase: 'blink', color: freshColor, stroke: freshStroke })
+
+        const blinkTimeout = window.setTimeout(() => {
+          setAnim({ phase: 'settled', color: freshColor, stroke: freshStroke })
+
+          const beatTimeout = window.setTimeout(() => {
+            if (!loggedRef.current) {
+              loggedRef.current = true
+              pendingCompleteRef.current = null
+              void logCompletion(task.id, { actualDurationMinutes: minutes })
+            }
+            const fallbackTimeout = window.setTimeout(() => {
+              setAnim((a) => (a && a.phase === 'settled' ? null : a))
+            }, SETTLE_FALLBACK_MS)
+            timeoutsRef.current.push(fallbackTimeout)
+          }, BEAT_MS)
+          timeoutsRef.current.push(beatTimeout)
+        }, BLINK_ITERATION_MS * BLINK_ITERATIONS)
+        timeoutsRef.current.push(blinkTimeout)
       }
     }
     rafRef.current = requestAnimationFrame(step)
   }
 
   const complete = (minutes: number) => {
-    playReset()
-    // Fire-and-forget: the live query will refresh the card once it lands.
-    void logCompletion(task.id, { actualDurationMinutes: minutes })
+    playReset(minutes)
   }
 
   const finishStopwatch = () => {
@@ -373,7 +550,10 @@ function TaskCard({
   const open = mode !== 'idle'
 
   return (
-    <li className={`relative rounded-xl bg-white shadow-sm dark:bg-neutral-900 ${open ? 'z-30' : ''}`}>
+    <li
+      ref={flipRef}
+      className={`relative rounded-xl bg-white shadow-sm dark:bg-neutral-900 ${open ? 'z-30' : ''}`}
+    >
       {/* Base tile — always rendered; blurs behind the prompt when open. */}
       <button
         type="button"
@@ -421,10 +601,8 @@ function TaskCard({
                   <div className="flex items-center justify-center gap-2 py-1">
                     <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" aria-hidden="true" />
                     <span className="text-3xl font-bold tabular-nums text-neutral-900 dark:text-neutral-100">
-                      {Math.floor(elapsedMs / 60000)}
-                    </span>
-                    <span className="text-base font-medium text-neutral-400 dark:text-neutral-500">
-                      min
+                      {Math.floor(elapsedMs / 60000)}:
+                      {String(Math.floor(elapsedMs / 1000) % 60).padStart(2, '0')}
                     </span>
                   </div>
                   <button
@@ -469,6 +647,7 @@ function App() {
 
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>(loadViewMode)
+  const flip = useFlip(viewMode)
 
   const changeViewMode = (mode: ViewMode) => {
     setViewMode(mode)
@@ -513,6 +692,7 @@ function App() {
       isActive={activeTaskId === task.id}
       onActivate={() => setActiveTaskId(task.id)}
       onClose={() => setActiveTaskId((id) => (id === task.id ? null : id))}
+      flipRef={flip(task.id)}
     />
   )
 

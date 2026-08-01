@@ -195,26 +195,70 @@ place and floats a **Start / Complete** prompt on top of it (`panel-pop`,
 absolute-positioned so siblings don't reflow; the active `<li>` gets `z-30`).
 There's no Cancel button — a `fixed inset-0` backdrop dismisses the panel when
 you tap anywhere outside the tile. The two paths:
-- **Start** — runs a minutes-only stopwatch (big elapsed-minute count, pulsing
-  dot, no seconds) in a solid lifted panel. **Done** rounds elapsed time to the
+- **Start** — runs a stopwatch (`M:SS`, always two-digit seconds,
+  `tabular-nums`, pulsing dot, ticking every 300ms so the seconds never
+  visibly skip) in a solid lifted panel. **Done** rounds elapsed time to the
   nearest 5 min (floor 5) and logs it.
 - **Complete** — opens an iOS-timer-style scroll-snap **`WheelPicker`** in
   5-min increments (5–90), defaulting to `estimatedDurationMinutes` snapped to
   the nearest 5; the centered (selected) value is enlarged/bolded so the
-  current pick stays legible. **Done** logs the selected value.
+  current pick stays legible. Initial centering runs in `useLayoutEffect` and
+  is re-asserted in a `requestAnimationFrame` so it survives the surrounding
+  `panel-pop` panel's layout settling, then reconciles once from the actual
+  scroll position so the highlighted row and the `Done` button's value never
+  disagree. Note: the selection band is a `position: absolute` sibling
+  rendered *before* the scroll container in the DOM — the scroll container
+  needs its own `position: relative` (present) so normal DOM-order stacking
+  applies and the band paints behind the rows instead of on top of them
+  (CSS stacks non-positioned in-flow content below auto-z-index positioned
+  siblings regardless of source order). **Done** logs the selected value.
 
-Both paths then play a **reset animation** (see `playReset`): the drop's
-time-fill drains left→right to empty via `requestAnimationFrame` (captures the
-pre-completion fill start + colors so it animates from the old state before the
-live query refreshes the now-fresh task), then the outline blinks green once
-(`reset-blink` CSS keyframe on an overlaid green outline path) for a positive
-freshness feel. App-level `activeTaskId` ensures only one card's panel is open
-at a time. CSS keyframes (`reset-blink`, `panel-pop`) and the wheel's
-scrollbar-hiding live in `src/index.css`.
+Both paths then play a **reset animation** (see `playReset`), fully in place,
+before anything moves: **drain (~1.4s ease-out) → blink × 3 → a ~200ms beat →
+write → glide** (see below). The drop's time-fill drains left→right via
+`requestAnimationFrame` (captures the pre-completion fill start + colors so
+it animates from the old state, isolated from the live query's refresh of
+the now-fresh task), with the fill and outline colors interpolating from
+their captured pre-completion values to fresh-state green (`#5ea02e` /
+darkened `#497d24`, matching `cycleColor`/`outlineColor` at 0% due) over the
+same drain — so an overdue red drop visibly cools back to green as it
+empties. After the drain, the outline blinks green **three times**
+(`reset-blink` CSS keyframe, `animation-iteration-count: 3`, on an overlaid
+green outline path). Only *after* the third blink plus a short beat does the
+actual `logCompletion` write fire (guarded to fire exactly once even if the
+card unmounts mid-animation, e.g. a view toggle — the write is never lost) —
+so the card stays completely in place through the whole visible animation,
+and the live-query re-sort it triggers happens only once the animation has
+already finished. The animation state (`anim`) is intentionally held open
+(phase `'settled'`) through the beat and past the write instead of clearing
+on a timer, so the card can't flash back to its old (e.g. red/overdue) live
+state in the gap before the live query catches up; it's cleared once `task`'s
+`lastCompletedDate` actually changes (a `SETTLE_FALLBACK_MS` = 2s timeout is
+just a safety net in case the write never lands). App-level `activeTaskId`
+ensures only one card's panel is open at a time. CSS keyframes (`reset-blink`,
+`panel-pop`) and the wheel's scrollbar-hiding live in `src/index.css`.
+
+**List reorder (FLIP glide):** whenever a completion (or 🎲 Randomize) causes
+`sortedTasks`/`roomGroups` to re-sort, affected task `<li>`s glide to their
+new position (~550ms, `cubic-bezier(0.25, 0.8, 0.25, 1)`) instead of jumping —
+a dependency-free FLIP implementation (`useFlip` in `App.tsx`): a
+`useLayoutEffect` with no dependency array runs after every render, diffs
+each tracked `<li>`'s `offsetTop` (not `getBoundingClientRect`, which scroll
+position would throw off) against its previous value, and for any that moved,
+sets an instant inverted `transform`, forces a reflow, then clears it with a
+transition so the browser eases it back to its natural position. Applies in
+both views (Urgency flat list and Rooms grouped lists) via a `flipRef(task.id)`
+ref factory passed down to each `TaskCard`'s `<li>`. Suppressed across a
+`viewMode` toggle (Urgency ↔ Rooms) by clearing the previous-position map on
+change, since that's a different list shape, not a reorder. Room *section*
+reordering in Rooms view (when a room's most-urgent task changes) is not
+glide-animated — only each task's own `<li>` is tracked, so a section header
+jumping is a known, accepted gap for now.
 
 Dev helpers in `db.ts`: `randomizeTaskState()` scatters completion dates for
 testing, surfaced as a DEV-only 🎲 Randomize button in the header (hidden in
-production via `import.meta.env.DEV`).
+production via `import.meta.env.DEV`); its reshuffle also glides via the same
+FLIP mechanism.
 
 No add/edit-task screen or navigation yet — this is the biggest remaining gap
 in the "basics" (the app is read-only beyond marking done). Note: task icons are

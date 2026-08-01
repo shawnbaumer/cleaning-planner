@@ -1,8 +1,9 @@
 @import "tailwindcss";
 
-/* Reset-animation blink: the drop's outline flashes green once after a task is
-   completed, for a positive "fresh again" feel. Applied to an extra overlaid
-   green outline path that fades in and back out. */
+/* Reset-animation blink: after the drain settles into fresh-state green, the
+   drop's outline flashes green three times, for a positive "fresh again"
+   feel that's actually noticeable. Applied to an extra overlaid green outline
+   path that fades in and back out on each iteration. */
 @keyframes reset-blink {
   0% {
     opacity: 0;
@@ -15,7 +16,7 @@
   }
 }
 .reset-blink {
-  animation: reset-blink 0.6s ease-out forwards;
+  animation: reset-blink 0.38s ease-out 3;
 }
 
 /* The interaction panel that appears on top of a tile pops in gently when it

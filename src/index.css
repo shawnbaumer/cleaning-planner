@@ -37,7 +37,8 @@
 }
 
 /* iOS-style duration wheel: hide the scrollbar so it reads as a picker, not a
-   scroll list. */
+   scroll list. Axis-agnostic — used on the wheel's horizontal
+   overflow-x-scroll container. */
 .wheel-scroll {
   scrollbar-width: none;
   -ms-overflow-style: none;

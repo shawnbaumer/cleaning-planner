@@ -191,27 +191,48 @@ muted room label (Lucide room icon + name) sits under the task name.
 
 **Completion interaction** (in `App.tsx`'s `TaskCard` component): tapping a
 card gives a small press animation (`active:scale`), then blurs the tile in
-place and floats a **Start / Complete** prompt on top of it (`panel-pop`,
-absolute-positioned so siblings don't reflow; the active `<li>` gets `z-30`).
-There's no Cancel button — a `fixed inset-0` backdrop dismisses the panel when
-you tap anywhere outside the tile. The two paths:
-- **Start** — runs a stopwatch (`M:SS`, always two-digit seconds,
-  `tabular-nums`, pulsing dot, ticking every 300ms so the seconds never
-  visibly skip) in a solid lifted panel. **Done** rounds elapsed time to the
-  nearest 5 min (floor 5) and logs it.
-- **Complete** — opens an iOS-timer-style scroll-snap **`WheelPicker`** in
-  5-min increments (5–90), defaulting to `estimatedDurationMinutes` snapped to
-  the nearest 5; the centered (selected) value is enlarged/bolded so the
-  current pick stays legible. Initial centering runs in `useLayoutEffect` and
-  is re-asserted in a `requestAnimationFrame` so it survives the surrounding
-  `panel-pop` panel's layout settling, then reconciles once from the actual
-  scroll position so the highlighted row and the `Done` button's value never
-  disagree. Note: the selection band is a `position: absolute` sibling
-  rendered *before* the scroll container in the DOM — the scroll container
-  needs its own `position: relative` (present) so normal DOM-order stacking
-  applies and the band paints behind the rows instead of on top of them
-  (CSS stacks non-positioned in-flow content below auto-z-index positioned
-  siblings regardless of source order). **Done** logs the selected value.
+place (`blur-[2px] opacity-60`, the task name/bar shimmering through as
+context) and floats controls on top of it in an `absolute inset-0
+overflow-hidden rounded-xl` overlay (`panel-pop`; the active `<li>` gets
+`z-30`) — the overlay can never grow past the tile's own footprint, which
+stays at its natural collapsed height throughout. There's no Cancel button —
+a `fixed inset-0` backdrop dismisses the panel when you tap anywhere outside
+the tile. All three interaction states are compact single rows that fit
+inside the tile rather than a taller panel stacked below it:
+- **Prompt** — `[▷ Start] [✓ Complete]`, both `flex-1`.
+- **Start** — runs a stopwatch: a solid pill (pulsing blue dot + `M:SS`,
+  always two-digit seconds, `tabular-nums`, ticking every 300ms so the
+  seconds never visibly skip) on the left, a compact **✓ Done** button on the
+  right. Done rounds elapsed time to the nearest 5 min (floor 5) and logs it.
+- **Complete** — opens an iOS-timer-style scroll-snap **`WheelPicker`**, now
+  **horizontal** (axis-swapped from an earlier vertical version — values
+  scroll left/right, `WHEEL_ITEM_W` = 56px items, `scrollLeft`-based
+  centering/reconcile), in 5-min increments (5–90), defaulting to
+  `estimatedDurationMinutes` snapped to the nearest 5; the centered value is
+  enlarged/bolded, the unit ("m") lives in the Done button rather than next to
+  each value since horizontal space is tight. The wheel itself is a `flex-1`
+  solid pill with left/right edge fades (instead of top/bottom), and a
+  fixed-width **✓ Xm** Done button sits to its right. Initial centering runs
+  in `useLayoutEffect` and is re-asserted in a `requestAnimationFrame` so it
+  survives the surrounding `panel-pop` panel's layout settling, then
+  reconciles once from the actual scroll position so the highlighted value
+  and the Done button's value never disagree. Note: the selection band is a
+  `position: absolute` sibling rendered *before* the scroll container in the
+  DOM — the scroll container needs its own `position: relative` (present) so
+  normal DOM-order stacking applies and the band paints behind the values
+  instead of on top of them (CSS stacks non-positioned in-flow content below
+  auto-z-index positioned siblings regardless of source order). Done logs the
+  centered value.
+
+Small-text controls (the stopwatch readout, the wheel) sit on their own solid
+`bg-white/95 dark:bg-neutral-900/95` pill (`shadow-sm ring-1 ring-black/5
+dark:ring-white/10`) for readability over the blurred tile underneath; every
+button in the flow (Start, Complete, both Done buttons) is a **frosted
+capsule** instead — `rounded-[10px]`, translucent card-color background +
+`backdrop-blur-md` (`bg-white/60 dark:bg-neutral-900/60`) so the blurred tile
+glows through, a hairline border, and a leading Lucide icon (`Play` on Start,
+`Check` on every Complete/Done). No solid blue/green fills remain in the
+completion flow — the pulsing stopwatch dot is the one color accent left.
 
 Both paths then play a **reset animation** (see `playReset`), fully in place,
 before anything moves: **drain (~1.4s ease-out) → blink × 3 → a ~200ms beat →

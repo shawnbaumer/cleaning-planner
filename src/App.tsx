@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { Check, Play } from 'lucide-react'
 import {
   db,
   seedDatabase,
@@ -25,15 +26,26 @@ import { roomIcon, taskIcon } from './lib/icons'
 // 5-minute increments from 5 to 90.
 const WHEEL_VALUES = Array.from({ length: 18 }, (_, i) => (i + 1) * 5)
 
+// The drop's fill/path geometry is defined on a 0-200 x-axis (see db.ts's
+// X0/X_RIGHT), but the bar's SVG viewBox starts slightly left of that (at
+// BAR_VIEWBOX_X, width BAR_VIEWBOX_W) so the left rounded cap's *stroke* —
+// which, unlike the fill, overflows past the path's own x=0 edge by half its
+// strokeWidth (up to 1.2 units for the 2.4-wide reset-blink flash) — has
+// margin to render instead of getting clipped at the viewport edge. The
+// right edge is left unchanged (BAR_VIEWBOX_X + BAR_VIEWBOX_W = 200) since
+// the drop's tip never reaches past ~197.25 there already.
+const BAR_VIEWBOX_X = -1.5
+const BAR_VIEWBOX_W = 201.5
+
 // Shared due-time axis ticks, positioned with the same axisX/axisFrac used by
-// every task's bar so the legend lines up with the bars underneath it. The
-// bar's SVG viewBox is "0 0 200 20", so a viewBox x maps to a % of width by
-// dividing by 200.
+// every task's bar so the legend lines up with the bars underneath it —
+// converted from a viewBox x to a % of width using the bar's actual viewBox
+// origin/span (BAR_VIEWBOX_X/_W) so the ticks stay aligned with the bars.
 const AXIS_TICKS = [
-  { label: '1d', percent: (axisX(axisFrac(1)) / 200) * 100 },
-  { label: '3d', percent: (axisX(axisFrac(3)) / 200) * 100 },
-  { label: '1w', percent: (axisX(axisFrac(7)) / 200) * 100 },
-  { label: '2w', percent: (axisX(axisFrac(14)) / 200) * 100 },
+  { label: '1d', percent: ((axisX(axisFrac(1)) - BAR_VIEWBOX_X) / BAR_VIEWBOX_W) * 100 },
+  { label: '3d', percent: ((axisX(axisFrac(3)) - BAR_VIEWBOX_X) / BAR_VIEWBOX_W) * 100 },
+  { label: '1w', percent: ((axisX(axisFrac(7)) - BAR_VIEWBOX_X) / BAR_VIEWBOX_W) * 100 },
+  { label: '2w', percent: ((axisX(axisFrac(14)) - BAR_VIEWBOX_X) / BAR_VIEWBOX_W) * 100 },
 ]
 
 type ViewMode = 'urgency' | 'room'
@@ -114,14 +126,27 @@ function useFlip(viewMode: ViewMode) {
 // Duration wheel (iOS-timer-style scroll picker)
 // ---------------------------------------------------------------------------
 
-const WHEEL_ITEM_H = 40
-const WHEEL_VISIBLE = 5 // odd, so there's a clear centered selection row
+const WHEEL_ITEM_W = 56
+const WHEEL_ROW_H = 40
+
+// A solid rounded pill for small-text controls (time readout, wheel) that
+// float over a blurred tile — needs its own opaque-ish background since the
+// tile behind it is blurred/dimmed and would otherwise muddy fine text.
+const PILL =
+  'rounded-full bg-white/95 dark:bg-neutral-900/95 shadow-sm ring-1 ring-black/5 dark:ring-white/10'
+
+// Every completion-flow button: a frosted capsule (translucent card color +
+// blur, so the blurred tile glows through) rather than a solid color, per
+// the "no blue/green" restyle — the pulsing stopwatch dot is the one
+// remaining color accent.
+const FROSTED_BTN =
+  'inline-flex items-center justify-center gap-1.5 rounded-[10px] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-neutral-900/60 backdrop-blur-md text-sm font-semibold text-neutral-900 dark:text-neutral-100 active:bg-white/80 dark:active:bg-neutral-900/80 transition-colors'
 
 /**
- * A vertical scroll-snap wheel of minute values, à la the iOS timer picker.
- * The centered row is the selection; scrolling changes it. Uncontrolled
- * scroll position, initialized once to `value`, then reports changes up via
- * onChange as the user scrolls/snaps.
+ * A horizontal scroll-snap wheel of minute values, à la the iOS timer picker
+ * turned on its side. The centered column is the selection; scrolling
+ * changes it. Uncontrolled scroll position, initialized once to `value`,
+ * then reports changes up via onChange as the user scrolls/snaps.
  */
 function WheelPicker({
   values,
@@ -133,17 +158,17 @@ function WheelPicker({
   onChange: (v: number) => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
-  const pad = (WHEEL_VISIBLE - 1) / 2
 
   // Reconcile the highlighted/reported value from wherever the wheel is
   // actually scrolled to — used both live (onScroll) and to settle the
-  // initial centering below, so the centered row and `value` never disagree.
+  // initial centering below, so the centered column and `value` never
+  // disagree.
   const handleScroll = () => {
     const el = ref.current
     if (!el) return
     const idx = Math.min(
       values.length - 1,
-      Math.max(0, Math.round(el.scrollTop / WHEEL_ITEM_H)),
+      Math.max(0, Math.round(el.scrollLeft / WHEEL_ITEM_W)),
     )
     const next = values[idx]
     if (next !== value) onChange(next)
@@ -153,15 +178,15 @@ function WheelPicker({
   // scroll position directly. Uses useLayoutEffect (not useEffect) so the
   // assignment happens before paint, and re-asserts it in a rAF because the
   // surrounding panel is still settling its `panel-pop` layout at mount time,
-  // which can otherwise clamp scrollTop back to 0. Reconciling afterward
-  // guarantees the visually centered row matches `value`.
+  // which can otherwise clamp scrollLeft back to 0. Reconciling afterward
+  // guarantees the visually centered column matches `value`.
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     const idx = Math.max(0, values.indexOf(value))
-    el.scrollTop = idx * WHEEL_ITEM_H
+    el.scrollLeft = idx * WHEEL_ITEM_W
     const raf = requestAnimationFrame(() => {
-      el.scrollTop = idx * WHEEL_ITEM_H
+      el.scrollLeft = idx * WHEEL_ITEM_W
       handleScroll()
     })
     return () => cancelAnimationFrame(raf)
@@ -169,45 +194,41 @@ function WheelPicker({
   }, [])
 
   return (
-    <div className="relative" style={{ height: WHEEL_ITEM_H * WHEEL_VISIBLE }}>
-      {/* selection band behind the centered row */}
+    <div className={`relative flex-1 overflow-hidden ${PILL}`} style={{ height: WHEEL_ROW_H }}>
+      {/* selection band behind the centered column */}
       <div
-        className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 rounded-lg bg-neutral-100 dark:bg-neutral-800"
-        style={{ height: WHEEL_ITEM_H }}
+        className="pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 rounded-full bg-neutral-100 dark:bg-neutral-800"
+        style={{ width: WHEEL_ITEM_W }}
         aria-hidden="true"
       />
       <div
         ref={ref}
         onScroll={handleScroll}
-        className="wheel-scroll relative h-full snap-y snap-mandatory overflow-y-scroll"
+        className="wheel-scroll relative flex h-full snap-x snap-mandatory overflow-x-scroll"
       >
-        <div style={{ height: WHEEL_ITEM_H * pad }} />
+        <div className="shrink-0" style={{ width: `calc(50% - ${WHEEL_ITEM_W / 2}px)` }} />
         {values.map((v) => {
           const selected = v === value
           return (
             <div
               key={v}
-              className={`flex snap-center items-center justify-center gap-1 tabular-nums transition-colors ${
+              className={`flex h-full shrink-0 snap-center items-center justify-center tabular-nums transition-colors ${
                 selected
-                  ? 'text-xl font-semibold text-neutral-900 dark:text-neutral-100'
-                  : 'text-base font-medium text-neutral-400 dark:text-neutral-600'
+                  ? 'text-base font-bold text-neutral-900 dark:text-neutral-100'
+                  : 'text-sm font-medium text-neutral-400 dark:text-neutral-600'
               }`}
-              style={{ height: WHEEL_ITEM_H }}
+              style={{ width: WHEEL_ITEM_W }}
             >
               {v}
-              <span
-                className={`font-normal ${selected ? 'text-sm text-neutral-500 dark:text-neutral-400' : 'text-xs text-neutral-400 dark:text-neutral-600'}`}
-              >
-                min
-              </span>
             </div>
           )
         })}
-        <div style={{ height: WHEEL_ITEM_H * pad }} />
+        <div className="shrink-0" style={{ width: `calc(50% - ${WHEEL_ITEM_W / 2}px)` }} />
       </div>
-      {/* soft top/bottom fades so off-center values recede */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-2/5 bg-gradient-to-b from-white to-transparent dark:from-neutral-900" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-white to-transparent dark:from-neutral-900" />
+      {/* soft left/right fades so off-center values recede, matching the
+          pill's own (near-opaque) background so the fade itself is invisible */}
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-2/5 bg-gradient-to-r from-white/95 to-transparent dark:from-neutral-900/95" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-2/5 bg-gradient-to-l from-white/95 to-transparent dark:from-neutral-900/95" />
     </div>
   )
 }
@@ -504,7 +525,11 @@ function TaskCard({
         </span>
       </div>
 
-      <svg viewBox="0 0 200 20" width="100%" className="mt-2.5 block">
+      <svg
+        viewBox={`${BAR_VIEWBOX_X} 0 ${BAR_VIEWBOX_W} 20`}
+        width="100%"
+        className="mt-2.5 block"
+      >
         <defs>
           <clipPath id={`fill-${task.id}`}>
             <rect x={sx} y={0} width={200} height={20} />
@@ -573,60 +598,49 @@ function TaskCard({
           {/* Tap anywhere outside the tile to dismiss. */}
           <div className="fixed inset-0 z-20" onClick={cancel} aria-hidden="true" />
 
-          {mode === 'prompt' ? (
+          {mode === 'prompt' && (
             // Start / Complete float on top of the blurred tile.
-            <div className="panel-pop absolute inset-0 z-30 flex items-center justify-center gap-2 px-3">
-              <button
-                type="button"
-                onClick={startStopwatch}
-                className="flex-1 rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white shadow-sm active:bg-blue-700"
-              >
+            <div className="panel-pop absolute inset-0 z-30 flex items-center justify-center gap-2 overflow-hidden rounded-xl px-3">
+              <button type="button" onClick={startStopwatch} className={`flex-1 py-2.5 ${FROSTED_BTN}`}>
+                <Play className="h-[15px] w-[15px]" strokeWidth={2.2} aria-hidden="true" />
                 Start
               </button>
-              <button
-                type="button"
-                onClick={openWheel}
-                className="flex-1 rounded-lg bg-green-600 py-2.5 text-sm font-semibold text-white shadow-sm active:bg-green-700"
-              >
+              <button type="button" onClick={openWheel} className={`flex-1 py-2.5 ${FROSTED_BTN}`}>
+                <Check className="h-[15px] w-[15px]" aria-hidden="true" />
                 Complete
               </button>
             </div>
-          ) : (
-            // Stopwatch / wheel: a solid panel lifted on top of the tile.
-            <div className="panel-pop absolute inset-x-0 top-0 z-30 rounded-xl bg-white p-3 shadow-lg ring-1 ring-black/5 dark:bg-neutral-900 dark:ring-white/10">
-              {cardFace}
+          )}
 
-              {mode === 'stopwatch' && (
-                <div className="mt-3 space-y-3">
-                  <div className="flex items-center justify-center gap-2 py-1">
-                    <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" aria-hidden="true" />
-                    <span className="text-3xl font-bold tabular-nums text-neutral-900 dark:text-neutral-100">
-                      {Math.floor(elapsedMs / 60000)}:
-                      {String(Math.floor(elapsedMs / 1000) % 60).padStart(2, '0')}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={finishStopwatch}
-                    className="w-full rounded-lg bg-green-600 py-2.5 text-sm font-semibold text-white active:bg-green-700"
-                  >
-                    Done
-                  </button>
-                </div>
-              )}
+          {mode === 'stopwatch' && (
+            // Elapsed-time pill + Done float on top of the blurred tile.
+            <div className="panel-pop absolute inset-0 z-30 flex items-center justify-center gap-2 overflow-hidden rounded-xl px-3">
+              <div className={`flex items-center gap-2 px-4 py-2 ${PILL}`}>
+                <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" aria-hidden="true" />
+                <span className="text-xl font-bold tabular-nums text-neutral-900 dark:text-neutral-100">
+                  {Math.floor(elapsedMs / 60000)}:
+                  {String(Math.floor(elapsedMs / 1000) % 60).padStart(2, '0')}
+                </span>
+              </div>
+              <button type="button" onClick={finishStopwatch} className={`shrink-0 px-5 py-2 ${FROSTED_BTN}`}>
+                <Check className="h-[15px] w-[15px]" aria-hidden="true" />
+                Done
+              </button>
+            </div>
+          )}
 
-              {mode === 'wheel' && (
-                <div className="mt-3 space-y-3">
-                  <WheelPicker values={WHEEL_VALUES} value={wheelValue} onChange={setWheelValue} />
-                  <button
-                    type="button"
-                    onClick={() => complete(wheelValue)}
-                    className="w-full rounded-lg bg-green-600 py-2.5 text-sm font-semibold text-white active:bg-green-700"
-                  >
-                    Done ({wheelValue} min)
-                  </button>
-                </div>
-              )}
+          {mode === 'wheel' && (
+            // Wheel pill + Done float on top of the blurred tile.
+            <div className="panel-pop absolute inset-0 z-30 flex items-center gap-2 overflow-hidden rounded-xl px-3">
+              <WheelPicker values={WHEEL_VALUES} value={wheelValue} onChange={setWheelValue} />
+              <button
+                type="button"
+                onClick={() => complete(wheelValue)}
+                className={`min-w-[84px] shrink-0 px-4 py-2 ${FROSTED_BTN}`}
+              >
+                <Check className="h-[15px] w-[15px]" aria-hidden="true" />
+                <span className="tabular-nums">{wheelValue}m</span>
+              </button>
             </div>
           )}
         </>

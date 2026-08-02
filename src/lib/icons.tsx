@@ -3,6 +3,7 @@ import {
   Wind,
   Droplets,
   Bed,
+  BedDouble,
   AppWindow,
   ShowerHead,
   Microwave,
@@ -14,6 +15,27 @@ import {
   CookingPot,
   Sofa,
   Home,
+  DoorOpen,
+  DoorClosed,
+  Monitor,
+  Sun,
+  Package,
+  Refrigerator,
+  Utensils,
+  Fan,
+  Sprout,
+  Flame,
+  FlameKindling,
+  MirrorRectangular,
+  Table2,
+  Library,
+  Footprints,
+  Armchair,
+  Shirt,
+  Toilet,
+  Blinds,
+  PanelsTopLeft,
+  LampDesk,
   type LucideIcon,
 } from 'lucide-react'
 import type { RoomType } from './db'
@@ -45,15 +67,78 @@ export function taskIcon(name: string): LucideIcon {
 /** A monochrome line icon for a room, chosen by its type. */
 export function roomIcon(type: RoomType): LucideIcon {
   switch (type) {
-    case 'bedroom':
-      return Bed
-    case 'bathroom':
-      return Bath
     case 'kitchen':
       return CookingPot
+    case 'bathroom':
+      return Bath
+    case 'hallway':
+      return DoorOpen
+    case 'bedroom':
+      return BedDouble
     case 'living-room':
       return Sofa
+    case 'office':
+      return Monitor
+    case 'balcony':
+      return Sun
     default:
-      return Home
+      return Package
   }
+}
+
+/**
+ * Every lucide icon name usable as a `Task.icon` value or a suggestion-
+ * library equipment icon — the library (`src/lib/library.ts`) and the setup
+ * wizard reference icons by these string keys (the lucide component's own
+ * name) rather than importing components directly, since `Task.icon` has to
+ * be a plain string to persist in IndexedDB.
+ */
+export const ICON_REGISTRY: Record<string, LucideIcon> = {
+  Feather,
+  Wind,
+  Droplets,
+  Bed,
+  BedDouble,
+  AppWindow,
+  ShowerHead,
+  Microwave,
+  Trash2,
+  WashingMachine,
+  SprayCan,
+  Sparkles,
+  Bath,
+  CookingPot,
+  Sofa,
+  Home,
+  DoorOpen,
+  DoorClosed,
+  Monitor,
+  Sun,
+  Package,
+  Refrigerator,
+  Utensils,
+  Fan,
+  Sprout,
+  Flame,
+  FlameKindling,
+  MirrorRectangular,
+  Table2,
+  Library,
+  Footprints,
+  Armchair,
+  Shirt,
+  Toilet,
+  Blinds,
+  PanelsTopLeft,
+  LampDesk,
+}
+
+/** Resolves an icon name (as stored in `Task.icon` or the library) to its component, if known. */
+export function resolveIcon(name: string | undefined): LucideIcon | undefined {
+  return name ? ICON_REGISTRY[name] : undefined
+}
+
+/** A task's icon: its explicit `icon` field if set and known, else the keyword-inferred fallback. */
+export function iconForTask(task: { name: string; icon?: string }): LucideIcon {
+  return resolveIcon(task.icon) ?? taskIcon(task.name)
 }

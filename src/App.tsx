@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Check, Play } from 'lucide-react'
+import Wizard from './Wizard'
 import {
   db,
-  seedDatabase,
   logCompletion,
   msUntilDue,
   urgencyBand,
@@ -20,7 +20,7 @@ import {
   type Task,
   type Room,
 } from './lib/db'
-import { roomIcon, taskIcon } from './lib/icons'
+import { roomIcon, iconForTask } from './lib/icons'
 
 // Duration wheel values for the "Complete" path's Apple-timer-style picker —
 // 5-minute increments from 5 to 90.
@@ -482,7 +482,7 @@ function TaskCard({
 
   // --- drop bar geometry / colors -----------------------------------------
   const band = urgencyBand(task)
-  const Icon = taskIcon(task.name)
+  const Icon = iconForTask(task)
   const RoomLabelIcon = room ? roomIcon(room.type) : null
   const path = hornPath(task.frequencyDays)
 
@@ -652,10 +652,6 @@ function TaskCard({
 // ---------------------------------------------------------------------------
 
 function App() {
-  useEffect(() => {
-    seedDatabase()
-  }, [])
-
   const tasks = useLiveQuery(() => db.tasks.toArray())
   const rooms = useLiveQuery(() => db.rooms.toArray())
 
@@ -678,6 +674,14 @@ function App() {
         <p className="text-neutral-400 dark:text-neutral-500">Loading…</p>
       </div>
     )
+  }
+
+  // No rooms yet means this is a fresh install (or the DEV-only seed/reset
+  // hasn't run) — hand off to the setup wizard instead of an empty list. The
+  // wizard writes directly to Dexie; this live query picks the new rooms up
+  // and swaps back to the list on its own, no callback needed.
+  if (rooms.length === 0) {
+    return <Wizard />
   }
 
   const roomsById = new Map<number, Room>(rooms.map((room) => [room.id, room]))

@@ -1,11 +1,45 @@
 import Dexie, { type EntityTable } from 'dexie'
 
-export type RoomType = 'bedroom' | 'bathroom' | 'kitchen' | 'living-room' | 'other'
+export type RoomType =
+  | 'bedroom'
+  | 'bathroom'
+  | 'kitchen'
+  | 'living-room'
+  | 'hallway'
+  | 'office'
+  | 'balcony'
+  | 'other'
+
+/**
+ * The household a room belongs to. Schema-ready for a future multi-home/
+ * sharing milestone, but there is NO home-related UI today — the setup
+ * wizard silently creates exactly one, and the app otherwise never surfaces
+ * it (single implicit home).
+ */
+export interface Home {
+  id: number
+  name: string
+  pets: boolean
+  plants: boolean
+  wfh: boolean
+}
+
+export type SizeClass = 'S' | 'M' | 'L'
+/** Window count, where 3 means "3 or more". */
+export type WindowCount = 0 | 1 | 2 | 3
+/** Floor covering. `null` for room types with no floor question (e.g. balcony). */
+export type FloorType = 'hard' | 'carpet' | 'mixed' | null
 
 export interface Room {
   id: number
+  homeId: number
   name: string
   type: RoomType
+  sizeClass: SizeClass
+  windows: WindowCount
+  floor: FloorType
+  /** Suggestion-library equipment keys, plus free-text custom items prefixed `custom:`. */
+  equipment: string[]
 }
 
 export interface Task {
@@ -18,6 +52,8 @@ export interface Task {
   estimatedDurationMinutes: number
   /** Epoch ms of the last time this task was completed, or null if never. */
   lastCompletedDate: number | null
+  /** Lucide icon name (resolved via iconForTask); falls back to taskIcon(name) keyword inference when unset. */
+  icon?: string
 }
 
 export interface CompletionLog {
@@ -30,6 +66,7 @@ export interface CompletionLog {
 }
 
 class CleaningPlannerDB extends Dexie {
+  homes!: EntityTable<Home, 'id'>
   rooms!: EntityTable<Room, 'id'>
   tasks!: EntityTable<Task, 'id'>
   completionLogs!: EntityTable<CompletionLog, 'id'>
@@ -41,6 +78,38 @@ class CleaningPlannerDB extends Dexie {
       tasks: '++id, roomId, lastCompletedDate',
       completionLogs: '++id, taskId, completedDate',
     })
+    // v2: setup-wizard schema — a `homes` table, and rooms gain the wizard's
+    // per-room config fields. Existing (dev) rooms are attached to a newly
+    // created default home and backfilled with reasonable defaults, so a
+    // pre-wizard database still opens cleanly.
+    this.version(2)
+      .stores({
+        homes: '++id',
+        rooms: '++id, type, homeId',
+        tasks: '++id, roomId, lastCompletedDate',
+        completionLogs: '++id, taskId, completedDate',
+      })
+      .upgrade(async (tx) => {
+        const rooms = await tx.table('rooms').toArray()
+        if (rooms.length === 0) return
+
+        const homeId = await tx.table('homes').add({
+          name: 'Home',
+          pets: false,
+          plants: false,
+          wfh: false,
+        })
+        await tx
+          .table('rooms')
+          .toCollection()
+          .modify((room) => {
+            room.homeId = homeId
+            room.sizeClass = 'M'
+            room.windows = 1
+            room.floor = 'hard'
+            room.equipment = []
+          })
+      })
   }
 }
 
@@ -382,19 +451,31 @@ const DEFAULT_TASKS: SeedTask[] = [
   { name: 'Clean microwave', roomType: 'kitchen', frequencyDays: 30, estimatedDurationMinutes: 5 },
 ]
 
-/** Seeds a small starter set of rooms and tasks. No-ops if any rooms already exist. */
+/**
+ * DEV-ONLY: seeds a small starter set of home/rooms/tasks, bypassing the
+ * setup wizard, for quick local iteration on the main list. No-ops if any
+ * rooms already exist. Superseded by the wizard for real first-launch setup.
+ */
 export async function seedDatabase(): Promise<void> {
-  await db.transaction('rw', db.rooms, db.tasks, async () => {
+  await db.transaction('rw', db.homes, db.rooms, db.tasks, async () => {
     // Check inside the transaction (rather than before it) so concurrent
     // calls — e.g. React StrictMode double-invoking an effect in dev — can't
     // both pass the check before either has inserted anything.
     const existingRoomCount = await db.rooms.count()
     if (existingRoomCount > 0) return
 
+    const homeId = await db.homes.add({ name: 'Home', pets: true, plants: true, wfh: false })
     const roomIdByType = new Map<RoomType, number>()
 
     for (const room of DEFAULT_ROOMS) {
-      const id = await db.rooms.add(room as Room)
+      const id = await db.rooms.add({
+        ...room,
+        homeId,
+        sizeClass: 'M',
+        windows: 1,
+        floor: 'hard',
+        equipment: [],
+      } satisfies Omit<Room, 'id'>)
       roomIdByType.set(room.type, id)
     }
 

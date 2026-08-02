@@ -42,8 +42,10 @@ and what fits the time available.
 ├── src/
 │   ├── lib/
 │   │   ├── db.ts        Dexie database instance (IndexedDB schema lives here)
-│   │   └── icons.tsx    Keyword→Lucide icon mapping (taskIcon, roomIcon)
-│   ├── App.tsx           Root component
+│   │   ├── icons.tsx    Keyword→Lucide icon mapping + name→component registry
+│   │   └── library.ts   Suggestion library + task-generation for the wizard
+│   ├── App.tsx           Root component (renders Wizard on first launch)
+│   ├── Wizard.tsx         First-launch home setup wizard
 │   ├── main.tsx          React entry point / DOM mount
 │   └── index.css         Tailwind entry point
 ├── index.html            Vite HTML entry
@@ -53,13 +55,29 @@ and what fits the time available.
 
 ## Data model
 
-Defined in `src/lib/db.ts` as three Dexie (IndexedDB) tables:
+Defined in `src/lib/db.ts` as four Dexie (IndexedDB) tables, currently at
+schema **v2** (v1 → v2 adds `homes` and the wizard's per-room config fields;
+the `upgrade()` migration attaches any pre-existing (dev) rooms to a newly
+created default home and backfills the new fields with defaults):
 
-- **Room** — `id`, `name`, `type` (`bedroom` | `bathroom` | `kitchen` |
-  `living-room` | `other`)
+- **Home** — `id`, `name`, `pets`, `plants`, `wfh` (booleans). The setup
+  wizard creates exactly **one**, silently — there is no home-related UI
+  anywhere (single implicit home; schema-ready for a future multi-home/
+  sharing milestone, intentionally UI-dormant until then)
+- **Room** — `id`, `homeId`, `name`, `type` (`bedroom` | `bathroom` |
+  `kitchen` | `living-room` | `hallway` | `office` | `balcony` | `other`),
+  `sizeClass` (`'S' | 'M' | 'L'`), `windows` (`0 | 1 | 2 | 3`, 3 = "3 or
+  more"), `floor` (`'hard' | 'carpet' | 'mixed' | null`, `null` for room
+  types with no floor question, e.g. balcony), `equipment` (`string[]` of
+  suggestion-library equipment keys, plus free-text custom items prefixed
+  `custom:`)
 - **Task** — `id`, `roomId`, `name`, `frequencyDays` (target interval between
   completions), `estimatedDurationMinutes` (adaptive estimate),
-  `lastCompletedDate` (epoch ms, or `null` if never completed)
+  `lastCompletedDate` (epoch ms, or `null` if never completed), `icon`
+  (optional Lucide icon name, e.g. `'Flame'` — resolved via
+  `iconForTask`/`ICON_REGISTRY` in `icons.tsx`; falls back to `taskIcon`'s
+  keyword inference when unset, which is the case for wizard free-text/
+  own tasks and any legacy/dev-seeded tasks)
 - **CompletionLog** — `id`, `taskId`, `completedDate` (epoch ms),
   `actualDurationMinutes` (optional — omitted if not tracked for that
   completion)
@@ -116,10 +134,58 @@ Defined in `src/lib/db.ts` as three Dexie (IndexedDB) tables:
 
 Task and room icons live in `src/lib/icons.tsx` (not `db.ts`): `taskIcon(name)`
 returns a keyword-inferred Lucide component, `roomIcon(type)` returns one per
-room type. Both are monochrome and inherit text color.
-- `seedDatabase()` — populates a starter set of rooms and common tasks with
-  research-backed default frequencies/durations; no-ops if any room already
-  exists
+room type (all 8 types, e.g. `BedDouble` for bedroom, `Sun` for balcony,
+`Package` for other). Both are monochrome and inherit text color. Also
+exports `ICON_REGISTRY` (a `Record<string, LucideIcon>` keyed by the lucide
+component's own name — `Task.icon`/the suggestion library reference icons by
+these string keys, since a component reference can't be persisted to
+IndexedDB), `resolveIcon(name)` (string → component, if known), and
+`iconForTask(task)` (the real entry point the main list uses: `task.icon`
+resolved via the registry, falling back to `taskIcon(task.name)`).
+- `seedDatabase()` — DEV-ONLY: seeds a small starter home/rooms/tasks
+  directly, bypassing the setup wizard, for quick local iteration on the main
+  list without walking through it every time; no-ops if any room already
+  exists. Not wired to any UI button (unlike `randomizeTaskState`) — call it
+  from the console if needed. Real first-launch setup goes through the wizard
+  (see below)
+
+### Suggestion library (`src/lib/library.ts`)
+
+The setup wizard's task suggestions, ported from the approved mockup
+(`SETUP_WIZARD_MOCKUP.html`, kept in the repo root as the design reference)
+and grounded in published cleaning-schedule guidance (Tidywell,
+HousewifeHowTos, NBC/science roundups). Deliberately **excludes tasks that
+announce themselves when undone** — no trash, no dishes, no visible-mess
+tidying — since those don't need a reminder; don't add any back.
+
+- `LIB` — per `RoomType`, a `base` task list plus an `equipment` list (each
+  equipment option carries its own icon/label and 1+ tasks unlocked by
+  selecting it in the wizard), and flags: `floorMop7` (kitchen/bathroom —
+  tightens the floor-mop task to 7 days), `windowsCurtains` (adds a curtain
+  task alongside the window task for bedroom/living-room/office),
+  `noFloor` (balcony — skips the floor question entirely)
+- `FLOOR_TASKS` — per floor type (`hard` / `carpet` / `mixed`), the tasks
+  that get added for it (e.g. mixed gets vacuum + mop + "shake out rugs")
+- `SIZES` / `WINDOWS` / `FLOORS` — the wizard's per-room question options;
+  `SIZES` carries the duration-scaling factor (0.7 / 1 / 1.4), `WINDOWS`
+  carries the window-cleaning task's duration by count
+- `FREQ_STEPS` / `fmtFreq(days)` — the frequency-stepper ladder
+  (`[1,2,3,4,5,7,10,14,21,30,45,60,90,120,180]`) and its human labels
+  ("every week", "every 2 months", …) used by the task-by-task screen's
+  +/− stepper
+- `buildTasks(room, profile)` — generates the concrete suggestion list for a
+  configured room: applies `pets` (halves frequency, min 1 day, for tasks
+  flagged `pets: true`, e.g. vacuuming), `sizeScale` (scales duration by the
+  room's size factor, rounded to 5-min steps, min 5), the floor tasks for the
+  chosen floor type (mop tightened to 7d if `floorMop7`), the tasks for each
+  selected equipment key, a generic "Clean {custom item}" (30d/15min) per
+  free-text `custom:` equipment entry, and — if `windows > 0` — a window task
+  (60d, duration by count) plus a curtain task if `windowsCurtains`
+- `baselineLastCompletedDate(frequencyDays, status, now?)` — the "Build my
+  home" day-one baseline: converts a task's chosen state chip (Fresh/Due
+  soon/Overdue → 5%/70%/130% of its cycle elapsed) plus random jitter in
+  [−10, +10] points (clamped ≥ 0) into a `lastCompletedDate`, so day one
+  looks like real life instead of a blank slate
 
 ## Product direction (beyond current build)
 
@@ -132,12 +198,13 @@ lost between sessions:
   color-coded urgency and HomeRoutine's "focused time-boxed session" idea;
   explicitly reject gamification (points, streaks, leaderboards, allowance
   systems) as adding engagement overhead rather than speed.
-- **Milestone B — setup wizard:** instead of adding tasks one by one, let the
-  user pick their rooms (and quantity of each) plus a few toggles (has pets,
-  has plants, etc.), and auto-generate a starter task list from a built-in
-  suggestion library seeded with researched default frequencies/durations
-  (see `seedDatabase()` for the current starter set). Still fully editable
-  afterward.
+- **Milestone B — setup wizard: done** (see Status below for the built
+  flow). One thing from the original plan intentionally deferred to its own
+  follow-up: the ⚙︎ gear button that reopens the wizard's overview screen as
+  the permanent post-setup home-management surface (add/remove rooms, edit a
+  room's config, re-decide tasks) — **this will be the app's only CRUD
+  surface once built; no separate add/edit-task screen is planned**. Until
+  then there's no way to add/edit/delete tasks after the wizard finishes.
 - **Milestone C — "give me X minutes":** user enters a time budget; the app
   sorts due/overdue tasks by urgency and greedily fills the time budget using
   `estimatedDurationMinutes`, surfacing which task(s) to do right now. No new
@@ -281,11 +348,81 @@ testing, surfaced as a DEV-only 🎲 Randomize button in the header (hidden in
 production via `import.meta.env.DEV`); its reshuffle also glides via the same
 FLIP mechanism.
 
-No add/edit-task screen or navigation yet — this is the biggest remaining gap
-in the "basics" (the app is read-only beyond marking done). Note: task icons are
-inferred from the name rather than stored — an explicit per-task icon field may
-be worth adding once custom tasks exist. Next up (still open): add/edit/delete
-tasks (CRUD), then the "give me X minutes" suggestion feature (Milestone C).
+No add/edit-task screen or navigation yet beyond the first-launch wizard (see
+below) — the app is otherwise read-only past marking a task done. Next up
+(still open): the ⚙︎ gear/overview management screen (the planned CRUD
+surface — see Product direction), then the "give me X minutes" suggestion
+feature (Milestone C).
+
+### Setup wizard (`src/Wizard.tsx`)
+
+First-launch flow, built from the approved `SETUP_WIZARD_MOCKUP.html` mockup
+(kept in the repo root as the canonical design reference — every screen,
+transition, and the suggestion library data are defined there first).
+`App.tsx` renders `<Wizard/>` instead of the main list whenever
+`db.rooms` is empty (the automatic `seedDatabase()` call on mount was
+removed — `seedDatabase`/`randomizeTaskState` remain as DEV-only helpers, the
+🎲 button unchanged); the wizard writes directly to Dexie, so `App`'s
+`useLiveQuery` on `db.rooms` picks up the new rooms and swaps back to the
+list on its own once "Build my home" completes — no callback needed.
+
+Screens, in order:
+1. **Home profile** — Pets / Plants / Work-from-home toggle rows (same
+   row styling as room selection); silently seeds the one `Home` row.
+2. **Room selection** — the 5 default room types (kitchen, bathroom,
+   hallway, bedroom, living room) as toggles, ON by default; a horizontal
+   scroll-snap wheel (same centering/reconcile pattern as the main app's
+   duration `WheelPicker`, adapted for text labels — see `RoomTypeWheel`) to
+   add any of all 8 types; added rooms get an **✕** remove button instead of
+   a toggle; duplicate room types auto-number ("Bedroom 2").
+3. **Per-room config accordion** — size → windows → floor (skipped for
+   `noFloor` types) → equipment grid, one question at a time; each answered
+   question collapses into a compact "label · value · edit" row above,
+   tap to reopen (`answerStep` jumps to the first still-unanswered step, or
+   to the end if none — so reopening an earlier answer doesn't force
+   re-walking the rest). Equipment is a 2-column icon grid (multi-select,
+   monochrome), plus a dashed **Add** tile → inline text input for
+   free-text custom items (stored as `custom:Name`); CTA reads "Empty —
+   continue" when nothing is selected. Confirming equipment calls
+   `buildTasks()` and moves to that room's task screen.
+4. **Task-by-task** — one `buildTasks()` suggestion per card: name,
+   estimated duration, a frequency +/− stepper on the `FREQ_STEPS` ladder
+   (shows "suggested X" once the user deviates), a Fresh/Due soon/Overdue
+   state-chip row (`Sparkles`/`Moon`/`CircleAlert`, tinted with the exact
+   green/amber/red from `db.ts`'s `cycleColor` palette — no emoji), and
+   Skip/Add task. Decided (added) tasks stack as compact rows above; skipped
+   ones leave no trace. After the last suggestion, the same screen switches
+   to a **free-text own-task** form (name + frequency stepper, "Add this
+   task", repeatable) then "Done with {room} →".
+5. **Overview** — every room, expandable to show its added tasks, a
+   "settings · edit" line that re-enters that room's config accordion (at
+   its first step — a known, mockup-inherited quirk: re-answering that first
+   question is what unlocks the rest as reopenable compact rows again),
+   "+ Add or remove rooms" (back to room selection), and **Build my home**.
+   Deliberate deviation from the mockup here: the mockup's "+ Add or remove
+   rooms" round-trip **rebuilds the room list from scratch**, silently
+   discarding every room's already-entered config/tasks — that's almost
+   certainly an oversight in throwaway prototype JS, not a design decision,
+   so `continueToRoomConfig` instead **merges by room name**, preserving any
+   room whose name survives the round-trip and only adding/dropping what
+   actually changed.
+6. **Build my home** — one Dexie transaction: creates the `Home` row, then
+   each room and its added tasks, each task's `lastCompletedDate` set via
+   `baselineLastCompletedDate` from its chosen state chip. One transaction
+   means a crash mid-write can't leave a half-built home (which would also
+   wrongly suppress the wizard on next launch).
+
+Navigation: a header back arrow (hidden only on the first Profile screen)
+steps backwards through the full hierarchy — task → previous task →
+equipment → floor → windows → size → previous room's last task → … → room
+selection → profile (`goBack`, mirroring the mockup's structured back-nav).
+No entry/slide/scale animations on any wizard screen — the design explicitly
+drops them (static renders only, unlike the main list's `panel-pop`/FLIP).
+
+Known limitation (by design, not yet addressed): wizard state lives entirely
+in memory — killing the app mid-wizard restarts it from the top. Acceptable
+for a one-time first-launch flow; worth revisiting if it becomes annoying in
+practice.
 
 ## Commands
 

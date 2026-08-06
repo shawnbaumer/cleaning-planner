@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Cleaning Planner — gear / home management mockup v1</title>
+<style>
+  :root {
+    --bg:#f5f5f5; --card:#fff; --text:#171717; --muted:#a3a3a3; --muted2:#737373;
+    --band:#ececec; --ring:rgba(0,0,0,.07); --inv:#171717; --invtext:#fff;
+    --good:#5ea02e; --soso:#e0a500; --ugly:#e24b4a;
+  }
+  .dark {
+    --bg:#0a0a0a; --card:#171717; --text:#f5f5f5; --muted:#737373; --muted2:#a3a3a3;
+    --band:#262626; --ring:rgba(255,255,255,.12); --inv:#f5f5f5; --invtext:#171717;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  body { margin:0; background:#d4d4d4; display:flex; justify-content:center; padding:24px 8px; }
+  .phone { width:390px; max-width:100%; height:800px; background:var(--bg); border-radius:28px; overflow:hidden;
+    box-shadow:0 12px 40px rgba(0,0,0,.35); border:1px solid rgba(0,0,0,.2); display:flex; flex-direction:column; }
+  header { background:color-mix(in srgb,var(--card) 90%,transparent); backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--ring); padding:12px 16px; display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  header .back { border:none; background:none; color:var(--muted2); font-size:22px; cursor:pointer; padding:0 6px; visibility:hidden; line-height:1; }
+  header .back.show { visibility:visible; }
+  header h1 { font-size:15px; font-weight:600; color:var(--text); margin:0; flex:1; }
+  .hbtn { border:none; background:none; color:var(--muted2); cursor:pointer; padding:2px 4px; display:none; line-height:0; }
+  .hbtn.show { display:block; }
+  .hbtn .ico { width:19px; height:19px; }
+  .toggle-dark { font-size:11px; color:var(--muted2); background:var(--band); border:none; border-radius:6px; padding:5px 8px; cursor:pointer; }
+  .scroll { flex:1; overflow-y:auto; padding:20px 18px 24px; display:flex; flex-direction:column; }
+  h2 { font-size:20px; font-weight:700; color:var(--text); margin:2px 0 5px; }
+  .sub { font-size:13px; color:var(--muted2); margin:0 0 16px; line-height:1.45; }
+  svg.i { width:1em; height:1em; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; vertical-align:-0.12em; }
+  .ico { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
+  .seclbl { font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:16px 2px 7px; }
+  .seclbl:first-child { margin-top:0; }
+
+  /* rows with toggles / remove buttons (room select & household) */
+  .rrow { display:flex; align-items:center; gap:12px; background:var(--card); border:1px solid var(--ring);
+    border-radius:12px; padding:13px 14px; margin-bottom:8px; cursor:pointer; }
+  .rrow .nm { flex:1; font-size:15px; font-weight:600; color:var(--text); }
+  .rrow .nm small { display:block; font-size:11.5px; font-weight:400; color:var(--muted); margin-top:1px; }
+  .rrow .ric { color:var(--muted2); display:flex; }
+  .sw { width:44px; height:26px; border-radius:13px; background:var(--band); position:relative; flex-shrink:0; }
+  .rrow.on .sw, .subrow.on .sw { background:var(--good); }
+  .sw::after { content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%;
+    background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.2); }
+  .rrow.on .sw::after, .subrow.on .sw::after { left:21px; }
+  .xbtn { width:28px; height:28px; border-radius:8px; border:1px solid var(--ring); background:var(--bg);
+    color:var(--muted2); font-size:15px; line-height:1; cursor:pointer; flex-shrink:0; }
+  .subrow { display:flex; align-items:center; gap:10px; padding:8px 2px; cursor:pointer; }
+  .subrow .nm { flex:1; font-size:14px; font-weight:500; color:var(--text); }
+  .subrow .ric { color:var(--muted2); display:flex; }
+  .subrow .ric .ico { width:18px; height:18px; }
+
+  .addwrap { background:var(--card); border:1px solid var(--ring); border-radius:12px; padding:10px 12px; margin-bottom:8px; }
+  .addwrap .lbl { font-size:12px; font-weight:600; color:var(--muted2); margin-bottom:6px; }
+  .addrow { display:flex; gap:8px; align-items:center; }
+  .wheelbox { flex:1; position:relative; height:40px; overflow:hidden; border-radius:9px; background:var(--band); }
+  .wband { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:96px; height:32px; border-radius:7px; background:var(--card); pointer-events:none; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .wheel { position:relative; display:flex; height:100%; overflow-x:scroll; scroll-snap-type:x mandatory; scrollbar-width:none; align-items:center; }
+  .wheel::-webkit-scrollbar { display:none; }
+  .wsp { flex-shrink:0; width:calc(50% - 48px); }
+  .wv { flex-shrink:0; width:96px; scroll-snap-align:center; text-align:center; font-size:13px; font-weight:500; color:var(--muted); white-space:nowrap; }
+  .wv.sel { font-size:14px; font-weight:700; color:var(--text); }
+  .addbtn { flex-shrink:0; border:1px solid var(--ring); background:var(--card); color:var(--text); border-radius:9px;
+    width:40px; height:40px; font-size:20px; cursor:pointer; }
+
+  .done-row { display:flex; align-items:center; gap:10px; background:var(--card); border:1px solid var(--ring);
+    border-radius:10px; padding:9px 12px; margin-bottom:6px; cursor:pointer; }
+  .done-row .k { font-size:12px; font-weight:600; color:var(--muted); width:66px; flex-shrink:0; }
+  .done-row .v { flex:1; font-size:13.5px; font-weight:600; color:var(--text); }
+  .done-row .edit { color:var(--muted); font-size:12px; }
+  .done-row.task .v small { color:var(--muted); font-weight:500; margin-left:6px; font-size:11.5px; }
+  .st.g { color:var(--good); } .st.b { color:var(--soso); } .st.u { color:var(--ugly); }
+
+  .q { background:var(--card); border:1px solid var(--ring); border-radius:14px; padding:16px; margin-top:10px;
+    box-shadow:0 2px 8px rgba(0,0,0,.05); }
+  .q h3 { margin:0 0 12px; font-size:16px; font-weight:700; color:var(--text); }
+  .optrow { display:flex; gap:7px; flex-wrap:wrap; }
+  .opt { border:1px solid var(--ring); background:var(--bg); color:var(--text); border-radius:10px; padding:10px 13px;
+    font-size:13.5px; font-weight:600; cursor:pointer; }
+  .opt small { display:block; font-size:10.5px; font-weight:400; color:var(--muted); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .tile2 { border:1px solid var(--ring); background:var(--bg); border-radius:11px; padding:12px 8px; text-align:center; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:5px; }
+  .tile2 .ico { width:22px; height:22px; color:var(--muted2); }
+  .tile2 .l { font-size:12.5px; font-weight:600; color:var(--text); }
+  .tile2.on { background:var(--inv); border-color:var(--inv); }
+  .tile2.on .l, .tile2.on .ico { color:var(--invtext); }
+  .tile2.addt { border-style:dashed; }
+  .qcta { margin-top:12px; width:100%; border:none; border-radius:10px; padding:12px 0; font-size:14px; font-weight:600;
+    background:var(--inv); color:var(--invtext); cursor:pointer; }
+  .inlineadd { display:flex; gap:7px; margin-top:9px; }
+  .inlineadd input { flex:1; border:1px solid var(--ring); background:var(--bg); color:var(--text); border-radius:9px;
+    padding:9px 11px; font-size:13.5px; outline:none; }
+  .inlineadd button { border:none; background:var(--inv); color:var(--invtext); border-radius:9px; padding:0 16px; font-size:13px; font-weight:600; cursor:pointer; }
+
+  .tname { font-size:17px; font-weight:700; color:var(--text); }
+  .test { font-size:12px; color:var(--muted); margin:2px 0 12px; }
+  .flabel { font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:12px 0 6px; }
+  .freq { display:flex; align-items:center; gap:10px; background:var(--bg); border-radius:10px; padding:6px; }
+  .freq button { width:36px; height:36px; border-radius:8px; border:1px solid var(--ring); background:var(--card); color:var(--text); font-size:18px; cursor:pointer; line-height:1; }
+  .freq .fv { flex:1; text-align:center; font-size:14.5px; font-weight:700; color:var(--text); }
+  .freq .fv small { display:block; font-size:10.5px; color:var(--muted); font-weight:500; }
+  .freq .fv .chg { display:block; color:var(--soso); font-size:10.5px; font-weight:600; }
+  .gbu { display:flex; gap:6px; }
+  .gbu button { flex:1; border:1px solid var(--ring); background:var(--bg); border-radius:9px; padding:9px 0;
+    font-size:11.5px; font-weight:600; color:var(--muted2); cursor:pointer; }
+  .gbu button .em { display:block; font-size:15px; margin-bottom:2px; }
+  .gbu button.g.on { background:color-mix(in srgb,var(--good) 14%,var(--card)); border-color:var(--good); color:var(--good); }
+  .gbu button.b.on { background:color-mix(in srgb,var(--soso) 14%,var(--card)); border-color:var(--soso); color:#8a6500; }
+  .gbu button.u.on { background:color-mix(in srgb,var(--ugly) 14%,var(--card)); border-color:var(--ugly); color:var(--ugly); }
+  .pair { display:flex; gap:8px; margin-top:14px; }
+  .pair button { flex:1; border-radius:10px; padding:12px 0; font-size:14px; font-weight:600; cursor:pointer; }
+  .pair .ghost { background:var(--card); color:var(--muted2); border:1px solid var(--ring); }
+  .pair .solid { background:var(--inv); color:var(--invtext); border:none; }
+  .pair .red { background:var(--ugly); color:#fff; border:none; }
+  input.tin { width:100%; border:1px solid var(--ring); background:var(--bg); color:var(--text); border-radius:10px;
+    padding:11px 12px; font-size:14.5px; font-weight:500; outline:none; }
+
+  .cta { display:block; width:100%; border:none; border-radius:11px; padding:14px 0; font-size:15px; font-weight:600;
+    background:var(--inv); color:var(--invtext); cursor:pointer; margin-top:16px; flex-shrink:0; }
+  .cta.ghost { background:var(--card); color:var(--text); border:1px solid var(--ring); }
+  .cta:disabled { opacity:.4; }
+
+  /* overview / management room cards */
+  .ovroom { background:var(--card); border:1px solid var(--ring); border-radius:13px; padding:13px 14px; margin-bottom:9px; }
+  .ovroom .hd { display:flex; align-items:center; gap:10px; cursor:pointer; }
+  .ovroom .hd .ric { color:var(--muted2); display:flex; }
+  .ovroom .hd .nm { flex:1; font-size:15px; font-weight:700; color:var(--text); }
+  .ovroom .hd .n { font-size:12px; color:var(--muted); }
+  .ovroom .set { font-size:12px; color:var(--muted2); margin-top:4px; cursor:pointer; }
+  .ovroom .set u { text-decoration:none; border-bottom:1px dotted var(--muted); }
+  .ovtasks { margin-top:8px; border-top:1px solid var(--ring); padding-top:4px; display:none; }
+  .ovroom.exp .ovtasks { display:block; }
+
+  /* management task rows + inline editor */
+  .trow { display:flex; align-items:center; gap:8px; padding:8px 2px; cursor:pointer; border-radius:8px; }
+  .trow .tn { flex:1; font-size:13.5px; font-weight:500; color:var(--text); min-width:0; }
+  .trow .tn small { color:var(--muted); font-weight:400; margin-left:6px; font-size:11.5px; }
+  .trow .edit { color:var(--muted); font-size:11.5px; flex-shrink:0; }
+  .editor { background:var(--bg); border:1px solid var(--ring); border-radius:11px; padding:12px; margin:5px 0 8px; }
+  .editor .flabel:first-child { margin-top:0; }
+  .durnote { font-size:11.5px; color:var(--muted); margin-top:8px; line-height:1.4; }
+  .rowactions { display:flex; gap:8px; margin-top:12px; align-items:center; }
+  .rowactions .del { background:none; border:none; color:var(--ugly); font-size:12.5px; font-weight:600; cursor:pointer; padding:8px 6px; }
+  .rowactions .done { flex:1; border:none; border-radius:9px; padding:10px 0; font-size:13px; font-weight:600; background:var(--inv); color:var(--invtext); cursor:pointer; }
+  .confirm { background:color-mix(in srgb,var(--ugly) 7%,var(--card)); border:1px solid color-mix(in srgb,var(--ugly) 45%,transparent);
+    border-radius:10px; padding:11px 12px; margin:6px 0 8px; }
+  .confirm p { margin:0 0 9px; font-size:12.5px; color:var(--text); line-height:1.45; }
+  .confirm .pair { margin-top:0; }
+  .confirm .pair button { padding:9px 0; font-size:13px; }
+
+  .addtask { border:1px dashed var(--ring); border-radius:10px; padding:9px; text-align:center; color:var(--muted2);
+    font-size:12.5px; font-weight:600; cursor:pointer; margin-top:6px; }
+  .sugrow { display:flex; align-items:center; gap:9px; background:var(--bg); border:1px solid var(--ring);
+    border-radius:10px; padding:9px 11px; margin-bottom:6px; cursor:pointer; }
+  .sugrow .v { flex:1; font-size:13px; font-weight:600; color:var(--text); }
+  .sugrow .v small { color:var(--muted); font-weight:500; margin-left:6px; font-size:11px; }
+  .sugrow .plus { color:var(--muted2); font-size:16px; line-height:1; }
+  .ordiv { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:11px; font-weight:600; margin:10px 0 8px; }
+  .ordiv::before, .ordiv::after { content:''; flex:1; height:1px; background:var(--ring); }
+
+  /* main list (app) */
+  .ptile { background:var(--card); border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.06); padding:10px 12px; margin-bottom:9px; }
+  .ptile .r1 { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .ptile .n { font-size:14px; font-weight:500; color:var(--text); }
+  .ptile .n small { font-size:11px; color:var(--muted); font-weight:400; margin-left:6px; }
+  .ptile .d { font-size:11.5px; font-weight:600; }
+  .ptile svg.bar { display:block; width:100%; margin-top:7px; }
+  .axis { position:relative; height:14px; margin:0 12px 8px; font-size:10.5px; font-weight:500; color:var(--muted); flex-shrink:0; }
+  .axis span { position:absolute; transform:translateX(-50%); }
+  .axis span:first-child { transform:none; }
+  .gearnote { display:flex; gap:10px; align-items:center; background:var(--band); border-radius:11px; padding:11px 13px;
+    font-size:12.5px; color:var(--muted2); margin-top:8px; line-height:1.4; }
+</style>
+</head>
+<body>
+<div class="phone" id="phone">
+  <header>
+    <button class="back" id="backBtn" onclick="goBack()">‹</button>
+    <h1 id="title">Cleaning Planner</h1>
+    <button class="hbtn" id="gearBtn" onclick="openManage()" title="Manage home"><svg class="ico" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button class="toggle-dark" onclick="document.getElementById('phone').classList.toggle('dark')">◐</button>
+  </header>
+  <div class="scroll" id="scr"></div>
+</div>
+
+<script>
+// ============ monochrome line icons (same set as the wizard mockup) =========
+const P = {
+  kitchen:'<path d="M3 11h18"/><path d="M20 11v6a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-6"/><path d="m5 7.5 14-3.5"/>',
+  bathroom:'<path d="M3 12h18"/><path d="M20 12v3a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-3"/><path d="M7 19v2M17 19v2"/><path d="M5 12V5a2 2 0 0 1 4 0"/>',
+  hallway:'<path d="M4 21h16"/><path d="M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M14.5 12h.01"/>',
+  bedroom:'<path d="M3 19v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6"/><path d="M3 16h18"/><path d="M5 11V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v5"/>',
+  'living-room':'<path d="M20 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v3"/><path d="M2 11v5a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5a2 2 0 0 0-4 0v2H6v-2a2 2 0 0 0-4 0Z"/><path d="M4 18v2M20 18v2"/>',
+  office:'<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  balcony:'<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M3 12h2M19 12h2M5.6 18.4 7 17M17 7l1.4-1.4"/>',
+  other:'<path d="M21 8v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8"/><rect x="2" y="4" width="20" height="4" rx="1"/><path d="M10 12h4"/>',
+  oven:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M7 6.5h.01M10 6.5h.01"/><rect x="7" y="12" width="10" height="5" rx="1"/>',
+  fridge:'<path d="M5 4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/><path d="M5 9h14"/><path d="M8 6h.01M8 12v3"/>',
+  dishwasher:'<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 8h16"/><path d="M8 5.5h.01"/><path d="M9 13a3 3 0 0 0 6 0"/><path d="M12 13v4"/>',
+  microwave:'<rect x="2" y="5" width="20" height="14" rx="2"/><rect x="5" y="8" width="9" height="8" rx="1"/><path d="M18 8v8"/>',
+  hood:'<path d="M4 13h16l-4-6H8z"/><path d="M12 3v4"/><path d="M8 17h.01M12 18h.01M16 17h.01"/>',
+  plants:'<path d="M7 21h10"/><path d="M12 21c0-4 0-6.5 2.5-9.5"/><path d="M12 15c0-3-1.5-5-4.5-5.8C5 8.6 3.6 9.3 3 10c1 2.6 2.6 4.4 6 4.7z"/><path d="M14.5 11.5c.6-2.5 2-4 4.5-4.7 1.5-.4 2.6 0 3 .4-.8 2.6-2.5 4.3-5.5 4.6z"/>',
+  shower:'<path d="M5 6 3 8"/><path d="M14 7a5 5 0 0 0-8 5.5"/><path d="m5 13 8-8"/><path d="M12 16h.01M9 17h.01M15 17h.01M7 20h.01M12 20h.01M17 20h.01"/>',
+  bathtub:'<path d="M3 12h18"/><path d="M20 12v3a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-3"/><path d="M7 19v2M17 19v2"/><path d="M5 12V5a2 2 0 0 1 4 0"/>',
+  washer:'<rect x="4" y="2" width="16" height="20" rx="2"/><circle cx="12" cy="13" r="4.5"/><path d="M8 5h.01M11 5h2"/>',
+  dryer:'<rect x="4" y="2" width="16" height="20" rx="2"/><circle cx="12" cy="13" r="4.5"/><path d="M9.8 13a2.2 2.2 0 0 0 4.4 0"/><path d="M8 5h.01"/>',
+  bed:'<path d="M3 19v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6"/><path d="M3 16h18"/><path d="M5 11V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v5"/>',
+  wardrobe:'<rect x="4" y="2" width="16" height="19" rx="2"/><path d="M12 2v19"/><path d="M10 10v2.5M14 10v2.5"/><path d="M7 21v1.5M17 21v1.5"/>',
+  desk:'<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  mirror:'<ellipse cx="12" cy="9.5" rx="5.5" ry="7.5"/><path d="M12 17v4M9 21h6"/>',
+  tv:'<path d="m17 2-5 5-5-5"/><rect x="2" y="7" width="20" height="14" rx="2"/>',
+  shelf:'<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/><path d="M20 17v5H6.5a2.5 2.5 0 0 1-1.7-.7"/>',
+  table:'<path d="M3 8h18"/><path d="M5 8v10M19 8v10"/><path d="m3 8 2-3h14l2 3"/>',
+  doormat:'<rect x="3" y="9" width="18" height="7" rx="1"/><path d="M6 11.5v2M9 11.5v2M12 11.5v2M15 11.5v2M18 11.5v2"/>',
+  grill:'<path d="M6 8a6 6 0 0 0 12 0z"/><path d="M12 14v3"/><path d="m8.5 21 1.2-4M15.5 21l-1.2-4"/>',
+  chair:'<path d="M5 11V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6"/><path d="M4 19h16v-4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2z"/><path d="M6 19v2M18 19v2"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  curtain:'<path d="M3 3h18"/><path d="M5 3v18"/><path d="M19 3v18"/><path d="M9 3c0 6-1 9-4 12"/><path d="M15 3c0 6 1 9 4 12"/>',
+  spark:'<path d="M9.9 3.6 11.4 8a1 1 0 0 0 .6.6l4.5 1.5a1 1 0 0 1 0 1.9L12 13.4a1 1 0 0 0-.6.6l-1.5 4.5a1 1 0 0 1-1.9 0L6.5 14a1 1 0 0 0-.6-.6L1.4 11.9a1 1 0 0 1 0-1.9L5.9 8.5a1 1 0 0 0 .6-.6l1.5-4.4a1 1 0 0 1 1.9 0Z"/><path d="M19 3v4M21 5h-4"/>',
+  home:'<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .7-1.5l7-6.1a2 2 0 0 1 2.6 0l7 6.1a2 2 0 0 1 .7 1.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  paw:'<circle cx="11" cy="4" r="2"/><circle cx="18" cy="8" r="2"/><circle cx="20" cy="16" r="2"/><path d="M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"/>',
+  laptop:'<path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/>',
+};
+const ico = (k,cls='ico') => `<svg class="${cls}" viewBox="0 0 24 24">${P[k]||P.other}</svg>`;
+const I_SPARK=`<svg class="i" viewBox="0 0 24 24">${P.spark}</svg>`;
+const I_HALF='<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg>';
+const I_ALERT='<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16.5" x2="12.01" y2="16.5"/></svg>';
+const ST_ICON={g:I_SPARK,b:I_HALF,u:I_ALERT};
+
+// ============ suggestion library (identical to the wizard mockup) ===========
+const FLOOR_TASKS = {
+  hard:[{n:'Vacuum / sweep floor',f:7,d:15,pets:true,sizeScale:true},{n:'Mop floor',f:14,d:15,sizeScale:true}],
+  carpet:[{n:'Vacuum carpet',f:7,d:15,pets:true,sizeScale:true}],
+  mixed:[{n:'Vacuum floor & rugs',f:7,d:15,pets:true,sizeScale:true},{n:'Mop hard floor',f:14,d:10,sizeScale:true},{n:'Shake out rugs',f:30,d:10}],
+};
+const LIB = {
+  kitchen:{floorMop7:true, base:[
+      {n:'Deep-wipe counters & hob',f:2,d:10},
+      {n:'Clean sink & drain',f:7,d:10},
+      {n:'Wipe cupboard fronts & handles',f:14,d:10}],
+    equipment:[
+      ['oven','oven','Oven',[{n:'Clean oven',f:90,d:45}]],
+      ['fridge','fridge','Fridge',[{n:'Clean fridge & check expiry',f:30,d:20}]],
+      ['dishwasher','dishwasher','Dishwasher',[{n:'Clean dishwasher filter',f:30,d:10}]],
+      ['microwave','microwave','Microwave',[{n:'Clean microwave inside',f:7,d:5}]],
+      ['hood','hood','Extractor hood',[{n:'Degrease hood filter',f:90,d:20}]],
+      ['plants','plants','Plants',[{n:'Water plants',f:4,d:5}]]]},
+  bathroom:{floorMop7:true, base:[
+      {n:'Clean toilet',f:7,d:15},
+      {n:'Clean sink & mirror',f:7,d:10},
+      {n:'Swap towels',f:4,d:5},
+      {n:'Wash bath mat',f:14,d:5},
+      {n:'Descale taps & showerhead',f:30,d:15}],
+    equipment:[
+      ['shower','shower','Shower',[{n:'Scrub shower & glass',f:7,d:15},{n:'Wash shower curtain',f:90,d:10}]],
+      ['bathtub','bathtub','Bathtub',[{n:'Scrub bathtub',f:7,d:15}]],
+      ['washer','washer','Washing machine',[{n:'Washer care cycle & seal',f:30,d:10}]],
+      ['dryer','dryer','Dryer',[{n:'Clear dryer lint & vent',f:90,d:10}]],
+      ['plants','plants','Plants',[{n:'Water plants',f:7,d:5}]]]},
+  bedroom:{base:[
+      {n:'Dust surfaces',f:7,d:10}],
+    windowsCurtains:true,
+    equipment:[
+      ['bed','bed','Bed',[{n:'Change bed sheets',f:7,d:15},{n:'Rotate & vacuum mattress',f:120,d:20},{n:'Wash duvet & pillows',f:120,d:15}]],
+      ['wardrobe','wardrobe','Wardrobe',[{n:'Declutter wardrobe',f:180,d:30}]],
+      ['desk','desk','Desk',[{n:'Wipe desk & tech',f:7,d:5}]],
+      ['mirror','mirror','Mirror',[{n:'Wipe mirror',f:14,d:5}]],
+      ['tv','tv','TV / electronics',[{n:'Dust electronics & cables',f:14,d:5}]],
+      ['plants','plants','Plants',[{n:'Water plants',f:4,d:5}]]]},
+  'living-room':{base:[
+      {n:'Dust surfaces & shelves',f:7,d:15},
+      {n:'Wipe remotes, switches & handles',f:7,d:5}],
+    windowsCurtains:true,
+    equipment:[
+      ['sofa','living-room','Sofa',[{n:'Vacuum sofa & under cushions',f:30,d:15,pets:true},{n:'Wash throws & cushion covers',f:30,d:10}]],
+      ['tv','tv','TV / electronics',[{n:'Dust TV & electronics',f:14,d:5}]],
+      ['table','table','Dining table',[{n:'Polish table & chairs',f:30,d:10}]],
+      ['shelf','shelf','Bookshelf',[{n:'Dust bookshelf & books',f:30,d:10}]],
+      ['plants','plants','Plants',[{n:'Water plants',f:4,d:5}]]]},
+  hallway:{base:[
+      {n:'Wipe handles, switches & rails',f:7,d:5}],
+    equipment:[
+      ['doormat','doormat','Doormat',[{n:'Shake out doormat',f:7,d:5}]],
+      ['mirror','mirror','Mirror',[{n:'Wipe mirror',f:14,d:5}]],
+      ['wardrobe','wardrobe','Coat closet',[{n:'Declutter coat closet',f:180,d:20}]]]},
+  office:{base:[
+      {n:'Dust surfaces',f:7,d:10}],
+    windowsCurtains:true,
+    equipment:[
+      ['desk','desk','Desk & screens',[{n:'Wipe desk, keyboard & screen',f:7,d:10}]],
+      ['shelf','shelf','Bookshelf',[{n:'Dust bookshelf',f:30,d:10}]],
+      ['plants','plants','Plants',[{n:'Water plants',f:4,d:5}]]]},
+  balcony:{noFloor:true, base:[
+      {n:'Sweep floor',f:14,d:10,sizeScale:true}],
+    equipment:[
+      ['chair','chair','Outdoor furniture',[{n:'Wipe outdoor furniture',f:30,d:10}]],
+      ['plants','plants','Plants',[{n:'Water plants',f:3,d:5}]],
+      ['grill','grill','Grill',[{n:'Deep clean grill',f:90,d:30}]]]},
+  other:{base:[
+      {n:'Dust surfaces',f:14,d:10}],
+    equipment:[
+      ['plants','plants','Plants',[{n:'Water plants',f:4,d:5}]],
+      ['mirror','mirror','Mirror / glass',[{n:'Wipe glass',f:14,d:5}]]]},
+};
+const TYPE_META={kitchen:'Kitchen',bathroom:'Bathroom',hallway:'Hallway',bedroom:'Bedroom','living-room':'Living room',office:'Office',balcony:'Balcony',other:'Other'};
+const WHEEL_TYPES=['bedroom','bathroom','kitchen','living-room','hallway','office','balcony','other'];
+const SIZES=[['S','Small','< 10 m²',.7],['M','Medium','10–20 m²',1],['L','Large','> 20 m²',1.4]];
+const WINDOWS=[['0','None',0],['1','1 window',10],['2','2 windows',15],['3','3 or more',25]];
+const FLOORS=[['hard','Hard floor','wood, tile, laminate'],['carpet','Carpet','wall-to-wall'],['mixed','Hard + rugs','the mixed classic']];
+const FREQ_STEPS=[1,2,3,4,5,7,10,14,21,30,45,60,90,120,180];
+const fmtFreq=f=>({1:'every day',7:'every week',14:'every 2 weeks',21:'every 3 weeks',30:'every month',60:'every 2 months',90:'every 3 months',120:'every 4 months',180:'every 6 months'})[f]||`every ${f} days`;
+const STATUS_PD={g:5,b:70,u:130};
+
+// Full library task list for a given room config — same math as the wizard's
+// buildTasks (pets halve, size scales durations, floor & equipment & windows).
+function libTasksFor(cfg, profile){
+  const lib=LIB[cfg.type], sizeF=SIZES.find(s=>s[0]===cfg.size)[3];
+  const out=[];
+  const add=t=>{ let f=t.f,d=t.d;
+    if(t.pets&&profile.pets)f=Math.max(1,Math.round(f/2));
+    if(t.sizeScale)d=Math.max(5,Math.round(d*sizeF/5)*5);
+    out.push({n:t.n,f,f0:f,d}); };
+  (lib.base||[]).forEach(add);
+  if(!lib.noFloor)(FLOOR_TASKS[cfg.floor]||[]).forEach(t=>{const t2={...t};if(lib.floorMop7&&t2.n.startsWith('Mop'))t2.f=7;add(t2);});
+  lib.equipment.filter(([k])=>cfg.equip.includes(k)).forEach(([,,,ts])=>ts.forEach(add));
+  (cfg.custom||[]).forEach(c=>add({n:`Clean ${c.name.toLowerCase()}`,f:30,d:15}));
+  if(cfg.windows&&cfg.windows!=='0'){
+    const w=WINDOWS.find(x=>x[0]===cfg.windows);
+    add({n:'Clean windows inside',f:60,d:w[2]});
+    if(lib.windowsCurtains) add({n:'Wash curtains / dust blinds',f:120,d:20});
+  }
+  return out;
+}
+// Library suggestions for a room that are NOT already among its tasks.
+function unusedSuggestions(r){
+  return libTasksFor(r,state.profile).filter(s=>!r.tasks.some(t=>t.n===s.n));
+}
+
+// ============ seeded "existing home" (simulates the live database) ==========
+let taskSeq=0;
+function mkTask(t,pdSeed){ taskSeq++;
+  return {id:taskSeq,n:t.n,f:t.f,f0:t.f0??t.f,d:t.d,own:!!t.own,
+    pd:pdSeed!==undefined?pdSeed:Math.max(0,(taskSeq*47)%155)}; }
+function mkRoom(type,name,size,windows,floor,equip,skipEvery4=true){
+  const r={type,name,size,windows,floor,equip,custom:[],tasks:[]};
+  const all=libTasksFor(r,{pets:true,plants:true,wfh:false});
+  // Leave some suggestions unused (as if skipped in the wizard) so the
+  // "+ Add task" panel has real content to offer.
+  r.tasks=all.filter((_,i)=>!skipEvery4||i%4!==3).map(t=>mkTask(t));
+  return r;
+}
+const state={
+  screen:'app', // app | manage | rooms | config | redecide
+  profile:{pets:true,plants:true,wfh:false},
+  rooms:[],
+  hhOpen:false, open:new Set(),
+  editing:null, confirmDel:null,
+  adding:null, addSel:null, addDraft:null,
+  cfg:null, rd:null,
+  confirmRoomDel:null, wheelIdx:0, showEquipAdd:false,
+};
+state.rooms=[
+  mkRoom('kitchen','Kitchen','M','1','hard',['fridge','dishwasher','microwave','plants']),
+  mkRoom('bathroom','Bathroom','S','0','hard',['shower','washer']),
+  mkRoom('hallway','Hallway','S','0','hard',['doormat']),
+  mkRoom('bedroom','Bedroom','M','2','mixed',['bed','wardrobe','mirror']),
+  mkRoom('living-room','Living room','L','2','mixed',['sofa','tv','shelf','plants']),
+];
+state.rooms[3].tasks.push(mkTask({n:'Clean yoga mat',f:30,d:5,own:true},40));
+
+// ============ chrome / navigation ===========================================
+const scr=document.getElementById('scr'), title=document.getElementById('title'),
+  backBtn=document.getElementById('backBtn'), gearBtn=document.getElementById('gearBtn');
+function render(){
+  backBtn.classList.toggle('show', state.screen!=='app');
+  gearBtn.classList.toggle('show', state.screen==='app');
+  scr.scrollTop=0;
+  ({app:rApp,manage:rManage,rooms:rRooms,config:rConfig,redecide:rRedecide})[state.screen]();
+}
+function openManage(){ state.screen='manage'; render(); }
+function goBack(){
+  const s=state.screen;
+  if(s==='manage'){ state.hhOpen=false; state.editing=null; state.adding=null; state.screen='app'; }
+  else if(s==='rooms'){ state.confirmRoomDel=null; state.screen='manage'; }
+  else if(s==='config'){
+    if(state.cfg.mode==='new'){
+      if(state.cfg.step>0){ state.cfg.step--; render(); return; }
+      state.rooms.splice(state.cfg.ri,1); state.cfg=null; state.screen='rooms'; // abandon new room
+    } else { state.cfg=null; state.screen='manage'; }
+  }
+  else if(s==='redecide'){ finishRedecide(true); return; }
+  render();
+}
+
+// ============ screen: main list (context for the gear button) ===============
+const X0=6.5,XR=197.25,AXIS_D=Math.log(15)/0.9;
+const axisFrac=x=>x<=0?0:Math.min(1,Math.log(1+x)/AXIS_D);
+const axisX=f=>X0+f*(XR-X0);
+function hornPath(c){const H=13,k=1.5,cy=10,R=H/2,N=46;const xE=axisX(axisFrac(c));
+const h=x=>H*Math.exp(-k*(x-X0)/(XR-X0));const rr=Math.max(1.1,h(xE)/2),xB=xE-rr;
+const xs=Array.from({length:N+1},(_,i)=>X0+(xB-X0)*(i/N));
+let p=`M ${X0} ${(cy-H/2).toFixed(2)}`;for(const x of xs)p+=` L ${x.toFixed(1)} ${(cy-h(x)/2).toFixed(2)}`;
+p+=` A ${rr.toFixed(2)} ${rr.toFixed(2)} 0 0 1 ${xB.toFixed(1)} ${(cy+h(xB)/2).toFixed(2)}`;
+for(let i=xs.length-1;i>=0;i--)p+=` L ${xs[i].toFixed(1)} ${(cy+h(xs[i])/2).toFixed(2)}`;
+p+=` A ${R} ${R} 0 0 1 ${X0} ${(cy-H/2).toFixed(2)} Z`;return p;}
+const GREEN=[94,160,46],YELLOW=[224,165,0],RED=[226,75,74];
+const hx=c=>'#'+c.map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+const mx=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
+function rApp(){
+  title.textContent='Cleaning Planner';
+  const all=[];
+  state.rooms.forEach(r=>r.tasks.forEach(t=>all.push({...t,room:r.name,dueIn:t.f*(1-t.pd/100)})));
+  all.sort((a,b)=>a.dueIn-b.dueIn);
+  const fmt=x=>x<-0.5?`${Math.round(-x)}d over`:x<0.5?'Today':`${Math.round(x)}d`;
+  scr.innerHTML=`
+    <div class="axis"><span>today</span>${[[1,'1d'],[3,'3d'],[7,'1w'],[14,'2w']].map(([d,l])=>`<span style="left:${axisX(axisFrac(d))/200*100}%">${l}</span>`).join('')}</div>
+    ${all.slice(0,9).map((t,idx)=>{
+      const fill=t.pd>=100?hx(RED):hx(mx(GREEN,YELLOW,t.pd/100));
+      const stroke=hx(mx(t.pd>=100?RED:mx(GREEN,YELLOW,t.pd/100),[0,0,0],.22));
+      const sx=axisX(axisFrac(Math.max(0,t.dueIn)));
+      const dc=t.pd>=100?'#dc2626':t.pd>=75?'#d97706':'var(--muted)';
+      return `<div class="ptile">
+        <div class="r1"><span class="n">${t.n}<small>${t.room}</small></span><span class="d" style="color:${dc}">${fmt(t.dueIn)}</span></div>
+        <svg class="bar" viewBox="0 0 200 20">
+          <defs><clipPath id="a${idx}"><rect x="${sx}" y="0" width="200" height="20"/></clipPath></defs>
+          <path d="${hornPath(t.f)}" fill="${fill}" clip-path="url(#a${idx})"/>
+          <path d="${hornPath(t.f)}" fill="none" stroke="${stroke}" stroke-width="0.7"/>
+        </svg></div>`;}).join('')}
+    <p class="sub" style="text-align:center">… the main list you know</p>
+    <div class="gearnote"><span style="font-size:17px">⚙︎</span><span>This mockup is about the <b>gear button</b> ↑ top right — tap it.</span></div>`;
+}
+
+// ============ screen: manage (the gear screen) ==============================
+function setLine(r){
+  return [SIZES.find(x=>x[0]===r.size)?.[1],WINDOWS.find(x=>x[0]===r.windows)?.[1],
+    LIB[r.type].noFloor?null:FLOORS.find(x=>x[0]===r.floor)?.[1]].filter(Boolean).join(' · ');
+}
+function rManage(){
+  title.textContent='Your home';
+  const p=state.profile;
+  const hhSummary=[p.pets&&'Pets',p.plants&&'Plants',p.wfh&&'Works from home'].filter(Boolean).join(', ')||'Nothing set';
+  scr.innerHTML=`
+    <p class="sub" style="margin-bottom:12px">Everything here saves instantly — no confirm, just leave when you're done.</p>
+
+    <div class="seclbl">Household</div>
+    <div class="ovroom ${state.hhOpen?'exp':''}">
+      <div class="hd" onclick="state.hhOpen=!state.hhOpen;render()">
+        <span class="ric">${ico('home')}</span><span class="nm">Household</span>
+        <span class="n">${hhSummary} ${state.hhOpen?'▴':'▾'}</span>
+      </div>
+      <div class="ovtasks">
+        ${[['pets','paw','Pets'],['plants','plants','Plants'],['wfh','laptop','Work from home']].map(([k,icn,l])=>`
+          <div class="subrow ${p[k]?'on':''}" onclick="state.profile.${k}=!state.profile.${k};render()">
+            <span class="ric">${ico(icn)}</span><span class="nm">${l}</span><span class="sw"></span>
+          </div>`).join('')}
+        <p class="sub" style="margin:6px 0 4px;font-size:11.5px">Only affects <b>future</b> suggestions — your current tasks and frequencies stay exactly as they are.</p>
+      </div>
+    </div>
+
+    <div class="seclbl">Rooms</div>
+    ${state.rooms.map((r,i)=>rmRoomCard(r,i)).join('')}
+    <button class="cta ghost" onclick="state.confirmRoomDel=null;state.screen='rooms';render()">+ Add or remove rooms</button>`;
+}
+function rmRoomCard(r,i){
+  const isExp=state.open.has(i);
+  return `<div class="ovroom ${isExp?'exp':''}">
+    <div class="hd" onclick="tglRoom(${i})">
+      <span class="ric">${ico(r.type)}</span><span class="nm">${r.name}</span>
+      <span class="n">${r.tasks.length} task${r.tasks.length===1?'':'s'} ${isExp?'▴':'▾'}</span>
+    </div>
+    <div class="set" onclick="openConfig(${i})"><u>${setLine(r)}</u> · edit setup</div>
+    <div class="ovtasks">
+      ${r.tasks.map(t=>rmTaskRow(r,i,t)).join('')}
+      ${state.adding===i?rmAddPanel(r,i):`<div class="addtask" onclick="openAdd(${i})">+ Add task</div>`}
+    </div>
+  </div>`;
+}
+function tglRoom(i){ state.open.has(i)?state.open.delete(i):state.open.add(i);
+  state.editing=null; state.adding=null; state.confirmDel=null; render(); }
+function rmTaskRow(r,ri,t){
+  const isEd=state.editing&&state.editing.ri===ri&&state.editing.tid===t.id;
+  if(!isEd) return `<div class="trow" onclick="openEditor(${ri},${t.id})">
+    <span class="tn">${t.n}<small>${fmtFreq(t.f)} · ~${t.d}m</small></span><span class="edit">edit</span></div>`;
+  if(state.confirmDel===t.id) return `<div class="confirm">
+    <p>Delete <b>${t.n}</b>? Its completion history goes with it.</p>
+    <div class="pair">
+      <button class="ghost" onclick="state.confirmDel=null;render()">Cancel</button>
+      <button class="red" onclick="delTask(${ri},${t.id})">Delete task</button>
+    </div></div>`;
+  return `<div class="editor">
+    <div class="flabel">Name</div>
+    <input class="tin" id="edName" value="${t.n.replace(/"/g,'&quot;')}" onchange="renTask(${ri},${t.id},this.value)">
+    <div class="flabel">How often?</div>
+    <div class="freq"><button onclick="edFreq(${ri},${t.id},-1)">−</button>
+      <div class="fv">${fmtFreq(t.f)}${t.f!==t.f0?`<span class="chg">suggested ${fmtFreq(t.f0)}</span>`:(t.own?'':'<small>suggested</small>')}</div>
+      <button onclick="edFreq(${ri},${t.id},1)">+</button></div>
+    <div class="durnote">Takes about <b>~${t.d} min</b> — this adapts automatically as you log completions, so there's nothing to set.</div>
+    <div class="rowactions">
+      <button class="del" onclick="state.confirmDel=${t.id};render()">Delete task</button>
+      <button class="done" onclick="state.editing=null;render()">Done</button>
+    </div></div>`;
+}
+function openEditor(ri,tid){ state.editing={ri,tid}; state.confirmDel=null; state.adding=null; render(); }
+function edFreq(ri,tid,dir){ const t=state.rooms[ri].tasks.find(x=>x.id===tid);
+  let fi=FREQ_STEPS.indexOf(t.f); if(fi<0)fi=FREQ_STEPS.findIndex(s=>s>=t.f);
+  t.f=FREQ_STEPS[Math.min(FREQ_STEPS.length-1,Math.max(0,fi+dir))]; render(); }
+function renTask(ri,tid,v){ const t=state.rooms[ri].tasks.find(x=>x.id===tid); if(v.trim())t.n=v.trim(); render(); }
+function delTask(ri,tid){ const ts=state.rooms[ri].tasks;
+  ts.splice(ts.findIndex(x=>x.id===tid),1); state.editing=null; state.confirmDel=null; render(); }
+
+// --- add-task panel ---------------------------------------------------------
+function openAdd(ri){ state.adding=ri; state.addSel=null; state.addDraft=null; state.editing=null; render(); }
+function rmAddPanel(r,ri){
+  const sugs=unusedSuggestions(r);
+  const draft=state.addDraft;
+  const draftCard=d=>`<div class="editor">
+    <div class="tname" style="font-size:14.5px">${d.n}</div>
+    <div class="test" style="margin-bottom:8px">takes about ${d.d} min</div>
+    <div class="flabel">How often?</div>
+    <div class="freq"><button onclick="draftFreq(-1)">−</button>
+      <div class="fv">${fmtFreq(d.f)}${d.f!==d.f0?`<span class="chg">suggested ${fmtFreq(d.f0)}</span>`:(d.own?'':'<small>suggested</small>')}</div>
+      <button onclick="draftFreq(1)">+</button></div>
+    <div class="flabel">State right now</div>
+    <div class="gbu">
+      <button class="g ${d.status==='g'?'on':''}" onclick="draftStat('g')"><span class="em">${I_SPARK}</span>Fresh</button>
+      <button class="b ${d.status==='b'?'on':''}" onclick="draftStat('b')"><span class="em">${I_HALF}</span>Due soon</button>
+      <button class="u ${d.status==='u'?'on':''}" onclick="draftStat('u')"><span class="em">${I_ALERT}</span>Overdue</button>
+    </div>
+    <div class="pair">
+      <button class="ghost" onclick="state.addSel=null;state.addDraft=null;render()">Back</button>
+      <button class="solid" onclick="commitDraft(${ri})">Add task</button>
+    </div></div>`;
+  if(draft) return draftCard(draft);
+  return `<div class="editor">
+    ${sugs.length?`<div class="flabel" style="margin-top:0">Suggestions you skipped</div>
+      ${sugs.map((s,i)=>`<div class="sugrow" onclick="pickSug(${ri},${i})">
+        <span class="v">${s.n}<small>${fmtFreq(s.f)} · ~${s.d}m</small></span><span class="plus">+</span></div>`).join('')}
+      <div class="ordiv">or your own</div>`
+      :`<div class="flabel" style="margin-top:0">Your own task</div>`}
+    <input class="tin" id="ownName" placeholder="Task name…">
+    <div class="flabel">How often?</div>
+    <div class="freq"><button onclick="ownFreqStep(-1)">−</button><div class="fv" id="ownF">${fmtFreq(state.ownF||7)}</div><button onclick="ownFreqStep(1)">+</button></div>
+    <div class="rowactions">
+      <button class="del" style="color:var(--muted2)" onclick="state.adding=null;render()">Cancel</button>
+      <button class="done" onclick="ownDraft(${ri})">Next</button>
+    </div></div>`;
+}
+function pickSug(ri,i){ const s=unusedSuggestions(state.rooms[ri])[i];
+  state.addDraft={...s,status:'b',own:false}; state.addSel=s.n; render(); }
+function ownFreqStep(dir){ let f=state.ownF||7; let fi=FREQ_STEPS.indexOf(f);
+  state.ownF=FREQ_STEPS[Math.min(FREQ_STEPS.length-1,Math.max(0,fi+dir))];
+  document.getElementById('ownF').textContent=fmtFreq(state.ownF); }
+function ownDraft(ri){ const nm=document.getElementById('ownName').value.trim(); if(!nm)return;
+  const f=state.ownF||7;
+  state.addDraft={n:nm,f,f0:f,d:10,status:'b',own:true}; render(); }
+function draftFreq(dir){ const d=state.addDraft; let fi=FREQ_STEPS.indexOf(d.f);
+  if(fi<0)fi=FREQ_STEPS.findIndex(s=>s>=d.f);
+  d.f=FREQ_STEPS[Math.min(FREQ_STEPS.length-1,Math.max(0,fi+dir))]; render(); }
+function draftStat(s){ state.addDraft.status=s; render(); }
+function commitDraft(ri){ const d=state.addDraft;
+  const pd=Math.max(0,STATUS_PD[d.status]+((taskSeq*37)%21-10));
+  state.rooms[ri].tasks.push(mkTask({n:d.n,f:d.f,f0:d.f0,d:d.d,own:d.own},pd));
+  state.adding=null; state.addSel=null; state.addDraft=null; state.ownF=7; render(); }
+
+// ============ screen: add / remove rooms ====================================
+function rRooms(){
+  title.textContent='Rooms';
+  scr.innerHTML=`
+    <h2>Add or remove rooms</h2>
+    <p class="sub">Removing a room deletes its tasks and their history. Adding one walks you through its setup, like the wizard did.</p>
+    ${state.rooms.map((r,i)=>{
+      if(state.confirmRoomDel===i) return `<div class="confirm">
+        <p>Remove <b>${r.name}</b>? Its ${r.tasks.length} task${r.tasks.length===1?'':'s'} and their completion history will be deleted.</p>
+        <div class="pair">
+          <button class="ghost" onclick="state.confirmRoomDel=null;render()">Cancel</button>
+          <button class="red" onclick="delRoom(${i})">Remove room</button>
+        </div></div>`;
+      return `<div class="rrow" style="cursor:default">
+        <span class="ric">${ico(r.type)}</span>
+        <span class="nm">${r.name}<small>${r.tasks.length} task${r.tasks.length===1?'':'s'}</small></span>
+        <button class="xbtn" onclick="state.confirmRoomDel=${i};render()">✕</button></div>`;
+    }).join('')}
+    <div class="addwrap">
+      <div class="lbl">Add another room</div>
+      <div class="addrow">
+        <div class="wheelbox"><div class="wband"></div>
+          <div class="wheel" id="typewheel"><div class="wsp"></div>
+            ${WHEEL_TYPES.map((t,i)=>`<div class="wv ${i===state.wheelIdx?'sel':''}" data-i="${i}">${TYPE_META[t]}</div>`).join('')}
+          <div class="wsp"></div></div>
+        </div>
+        <button class="addbtn" onclick="addRoom()">+</button>
+      </div>
+    </div>
+    <button class="cta" onclick="state.screen='manage';render()">Done</button>`;
+  const wh=document.getElementById('typewheel'), W=96;
+  wh.scrollLeft=state.wheelIdx*W;
+  requestAnimationFrame(()=>{wh.scrollLeft=state.wheelIdx*W;});
+  wh.addEventListener('scroll',()=>{
+    const idx=Math.min(WHEEL_TYPES.length-1,Math.max(0,Math.round(wh.scrollLeft/W)));
+    if(idx!==state.wheelIdx){ state.wheelIdx=idx;
+      wh.querySelectorAll('.wv').forEach(el=>el.classList.toggle('sel',+el.dataset.i===idx)); }
+  },{passive:true});
+}
+function delRoom(i){ state.rooms.splice(i,1); state.confirmRoomDel=null;
+  state.open=new Set([...state.open].filter(x=>x!==i).map(x=>x>i?x-1:x)); render(); }
+function addRoom(){
+  const t=WHEEL_TYPES[state.wheelIdx];
+  const n=state.rooms.filter(r=>r.type===t).length;
+  const name=n?`${TYPE_META[t]} ${n+1}`:TYPE_META[t];
+  const room={type:t,name,size:null,windows:null,floor:LIB[t].noFloor?'hard':null,equip:[],custom:[],tasks:[]};
+  state.rooms.push(room);
+  state.cfg={ri:state.rooms.length-1,mode:'new',step:0,avail0:null,cfg0:null};
+  state.showEquipAdd=false;
+  state.screen='config'; render();
+}
+
+// ============ screen: room config (edit setup / new room) ===================
+function cfgSteps(r){ return LIB[r.type].noFloor?['size','windows','equipment']:['size','windows','floor','equipment']; }
+function openConfig(i){
+  const r=state.rooms[i];
+  state.cfg={ri:i,mode:'edit',step:null,
+    cfg0:{type:r.type,size:r.size,windows:r.windows,floor:r.floor,equip:[...r.equip],custom:[...(r.custom||[])]},
+    avail0:null};
+  state.showEquipAdd=false;
+  state.screen='config'; render();
+}
+function rConfig(){
+  const c=state.cfg, r=state.rooms[c.ri], steps=cfgSteps(r);
+  const isNew=c.mode==='new';
+  title.textContent=isNew?`${r.name} · new room`:`${r.name} · setup`;
+  const openStep=isNew?steps[c.step]:(c.step!==null?steps[c.step]:null);
+  const compactList=isNew?steps.slice(0,c.step):steps.filter(s=>s!==openStep);
+  const compact=compactList.map(s=>{
+    const v=s==='size'?SIZES.find(x=>x[0]===r.size)?.slice(1,3).join(' · ')
+      :s==='windows'?WINDOWS.find(x=>x[0]===r.windows)?.[1]
+      :s==='floor'?FLOORS.find(x=>x[0]===r.floor)?.[1]
+      :(r.equip.length||r.custom.length)?[...r.equip.map(k=>LIB[r.type].equipment.find(e=>e[0]===k)?.[2]),...r.custom.map(cu=>cu.name)].join(', '):'Empty';
+    return `<div class="done-row" onclick="reopenStep('${s}')"><span class="k">${{size:'Size',windows:'Windows',floor:'Floor',equipment:'Inside'}[s]}</span><span class="v">${v??''}</span><span class="edit">edit</span></div>`;
+  }).join('');
+  let q='';
+  if(openStep==='size') q=`<div class="q"><h3>How big is ${r.name}?</h3><div class="optrow">
+      ${SIZES.map(([k,l,range])=>`<button class="opt" onclick="ans('size','${k}')">${l}<small>${range}</small></button>`).join('')}</div></div>`;
+  if(openStep==='windows') q=`<div class="q"><h3>Windows?</h3><div class="optrow">
+      ${WINDOWS.map(([k,l])=>`<button class="opt" onclick="ans('windows','${k}')">${l}</button>`).join('')}</div></div>`;
+  if(openStep==='floor') q=`<div class="q"><h3>What's on the floor?</h3><div class="optrow">
+      ${FLOORS.map(([k,l,d])=>`<button class="opt" onclick="ans('floor','${k}')">${l}<small>${d}</small></button>`).join('')}</div></div>`;
+  if(openStep==='equipment') q=`<div class="q"><h3>What's in here?</h3><div class="grid2">
+      ${LIB[r.type].equipment.map(([k,icn,l])=>`<button class="tile2 ${r.equip.includes(k)?'on':''}" onclick="tglEquip('${k}')">${ico(icn)}<span class="l">${l}</span></button>`).join('')}
+      ${r.custom.map((cu,i)=>`<button class="tile2 on" onclick="state.rooms[state.cfg.ri].custom.splice(${i},1);render()">${ico('spark')}<span class="l">${cu.name}</span></button>`).join('')}
+      <button class="tile2 addt" onclick="state.showEquipAdd=!state.showEquipAdd;render()">${ico('plus')}<span class="l">Add</span></button>
+      </div>
+      ${state.showEquipAdd?`<div class="inlineadd"><input id="eqName" placeholder="e.g. Aquarium, piano…"><button onclick="addEquip()">Add</button></div>`:''}
+      ${isNew?`<button class="qcta" onclick="newRoomTasks()">${(r.equip.length||r.custom.length)?'Continue':'Empty — continue'}</button>`
+             :`<button class="qcta" onclick="state.cfg.step=null;render()">Done</button>`}
+      </div>`;
+  const note=isNew?'' :`<p class="sub" style="margin-bottom:10px">Tap a line to change it. When you're done, anything your changes unlock gets offered as new tasks — what you already have stays untouched.</p>`;
+  scr.innerHTML=`${note}${compact}${q}${!isNew?`<button class="cta" onclick="applyConfig()">Done</button>`:''}`;
+}
+function reopenStep(s){ const c=state.cfg, steps=cfgSteps(state.rooms[c.ri]);
+  c.step=steps.indexOf(s); render(); }
+function ans(k,v){ const c=state.cfg, r=state.rooms[c.ri];
+  r[k==='size'?'size':k]=v;
+  if(c.mode==='new'){
+    const steps=cfgSteps(r);
+    let nxt=steps.length-1;
+    for(let i=0;i<steps.length;i++){ const s=steps[i]; if(s!=='equipment'&&r[s==='size'?'size':s]===null){ nxt=i; break; } }
+    c.step=nxt;
+  } else c.step=null;
+  render(); }
+function tglEquip(k){ const a=state.rooms[state.cfg.ri].equip;
+  a.includes(k)?a.splice(a.indexOf(k),1):a.push(k); render(); }
+function addEquip(){ const v=document.getElementById('eqName').value.trim(); if(!v)return;
+  state.rooms[state.cfg.ri].custom.push({name:v}); state.showEquipAdd=false; render(); }
+
+// Apply an edit-mode config change: diff the library output before vs after.
+// Newly unlocked suggestions -> re-decide them one by one; tasks whose source
+// disappeared (equipment/floor/windows removed) -> offer their removal.
+// Everything already decided stays untouched.
+function applyConfig(){
+  const c=state.cfg, r=state.rooms[c.ri];
+  const lib0=libTasksFor(c.cfg0,state.profile).map(t=>t.n);
+  const lib1=libTasksFor(r,state.profile);
+  const lib1n=lib1.map(t=>t.n);
+  const news=lib1.filter(t=>!lib0.includes(t.n)&&!r.tasks.some(x=>x.n===t.n))
+    .map(t=>({...t,status:'b',added:null}));
+  const removals=r.tasks.filter(t=>!t.own&&lib0.includes(t.n)&&!lib1n.includes(t.n)).map(t=>t.id);
+  state.cfg=null;
+  if(news.length||removals.length){
+    state.rd={ri:c.ri,list:news,i:0,removals,mode:'edit'};
+    state.screen='redecide';
+  } else state.screen='manage';
+  render();
+}
+// New-room path: every library suggestion goes through re-decide.
+function newRoomTasks(){
+  const c=state.cfg, r=state.rooms[c.ri];
+  if(r.size===null)r.size='M'; if(r.windows===null)r.windows='0';
+  const list=libTasksFor(r,state.profile).map(t=>({...t,status:'b',added:null}));
+  state.cfg=null;
+  state.rd={ri:c.ri,list,i:0,removals:[],mode:'new'};
+  state.screen='redecide'; render();
+}
+
+// ============ screen: re-decide (new suggestions / removals) ================
+function rRedecide(){
+  const rd=state.rd, r=state.rooms[rd.ri];
+  title.textContent=`${r.name} · new tasks`;
+  const t=rd.list[rd.i];
+  const decided=rd.list.slice(0,rd.i).filter(x=>x.added);
+  const compactRows=decided.map(x=>`<div class="done-row task"><span class="st ${x.status}">${ST_ICON[x.status]}</span><span class="v">${x.n}<small>${fmtFreq(x.f)} · ~${x.d}m</small></span><span class="edit"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span></div>`).join('');
+  if(t){
+    scr.innerHTML=`
+      ${rd.mode==='edit'?`<p class="sub" style="margin-bottom:10px">Your setup change unlocked ${rd.list.length===1?'this':'these'} — decide ${rd.list.length===1?'it':'each one'}. Nothing else changes.</p>`:''}
+      ${compactRows}
+      <div class="q">
+        <div class="tname">${t.n}</div>
+        <div class="test">takes about ${t.d} min · ${rd.i+1} of ${rd.list.length} suggestion${rd.list.length===1?'':'s'}</div>
+        <div class="flabel">How often?</div>
+        <div class="freq"><button onclick="rdFreq(-1)">−</button>
+          <div class="fv">${fmtFreq(t.f)}${t.f!==t.f0?`<span class="chg">suggested ${fmtFreq(t.f0)}</span>`:'<small>suggested</small>'}</div>
+          <button onclick="rdFreq(1)">+</button></div>
+        <div class="flabel">State right now</div>
+        <div class="gbu">
+          <button class="g ${t.status==='g'?'on':''}" onclick="rdStat('g')"><span class="em">${I_SPARK}</span>Fresh</button>
+          <button class="b ${t.status==='b'?'on':''}" onclick="rdStat('b')"><span class="em">${I_HALF}</span>Due soon</button>
+          <button class="u ${t.status==='u'?'on':''}" onclick="rdStat('u')"><span class="em">${I_ALERT}</span>Overdue</button>
+        </div>
+        <div class="pair">
+          <button class="ghost" onclick="rdDecide(false)">Skip</button>
+          <button class="solid" onclick="rdDecide(true)">Add task</button>
+        </div>
+      </div>`;
+    return;
+  }
+  // list exhausted -> removals prompt (edit mode), else finish
+  if(rd.removals.length){
+    const r2=state.rooms[rd.ri];
+    const names=rd.removals.map(id=>r2.tasks.find(t=>t.id===id)?.n).filter(Boolean);
+    scr.innerHTML=`
+      ${compactRows}
+      <div class="q">
+        <h3>No longer part of ${r2.name}'s setup</h3>
+        <p class="sub" style="margin-bottom:10px">${names.length===1?'This task':'These tasks'} came with something you just removed:</p>
+        ${names.map(n=>`<div class="done-row task" style="cursor:default"><span class="st u">${I_ALERT}</span><span class="v">${n}</span></div>`).join('')}
+        <div class="pair">
+          <button class="ghost" onclick="state.rd.removals=[];render()">Keep ${names.length===1?'it':'them'}</button>
+          <button class="red" onclick="doRemovals()">Remove ${names.length===1?'it':`all ${names.length}`}</button>
+        </div>
+      </div>`;
+    return;
+  }
+  finishRedecide(false);
+}
+function rdFreq(dir){ const t=state.rd.list[state.rd.i];
+  let fi=FREQ_STEPS.indexOf(t.f); if(fi<0)fi=FREQ_STEPS.findIndex(s=>s>=t.f);
+  t.f=FREQ_STEPS[Math.min(FREQ_STEPS.length-1,Math.max(0,fi+dir))]; render(); }
+function rdStat(s){ state.rd.list[state.rd.i].status=s; render(); }
+function rdDecide(add){ state.rd.list[state.rd.i].added=add; state.rd.i++; render(); }
+function doRemovals(){ const rd=state.rd, r=state.rooms[rd.ri];
+  r.tasks=r.tasks.filter(t=>!rd.removals.includes(t.id));
+  rd.removals=[]; render(); }
+function finishRedecide(fromBack){
+  const rd=state.rd; if(!rd){ state.screen='manage'; render(); return; }
+  const r=state.rooms[rd.ri];
+  rd.list.filter(t=>t.added).forEach(t=>{
+    const pd=Math.max(0,STATUS_PD[t.status]+((++taskSeq*37)%21-10));
+    r.tasks.push({id:taskSeq,n:t.n,f:t.f,f0:t.f0,d:t.d,own:false,pd});
+  });
+  state.rd=null;
+  state.open.add(rd.ri);
+  state.screen='manage'; render();
+}
+
+render();
+</script>
+</body>
+</html>

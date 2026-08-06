@@ -1,27 +1,11 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-import {
-  ChevronLeft,
-  Plus,
-  X,
-  Check,
-  Minus,
-  PawPrint,
-  Sprout as SproutIcon,
-  Laptop,
-  Sparkles,
-  Moon,
-  CircleAlert,
-  type LucideIcon,
-} from 'lucide-react'
+import { useState } from 'react'
+import { ChevronLeft, Plus, X, PawPrint, Sprout as SproutIcon, Laptop } from 'lucide-react'
 import { db, type FloorType, type RoomType, type SizeClass, type WindowCount } from './lib/db'
 import {
   LIB,
   TYPE_META,
   DEFAULT_ROOM_TYPES,
   WHEEL_ROOM_TYPES,
-  SIZES,
-  WINDOWS,
-  FLOORS,
   FREQ_STEPS,
   fmtFreq,
   buildTasks,
@@ -30,33 +14,21 @@ import {
   type SuggestedTask,
   type TaskStatus,
 } from './lib/library'
-import { resolveIcon, roomIcon } from './lib/icons'
-
-// ---------------------------------------------------------------------------
-// Shared style tokens — matches the main app's card/CTA conventions
-// (rounded-xl white/neutral-900 cards, black-inverted primary CTA).
-// ---------------------------------------------------------------------------
-
-const CARD = 'rounded-xl bg-white shadow-sm ring-1 ring-black/5 dark:bg-neutral-900 dark:ring-white/10'
-const CTA =
-  'block w-full rounded-xl bg-neutral-900 py-3.5 text-center text-[15px] font-semibold text-white transition active:bg-neutral-700 disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900 dark:active:bg-neutral-300'
-const CTA_GHOST = `block w-full rounded-xl ${CARD} py-3.5 text-center text-[15px] font-semibold text-neutral-900 dark:text-neutral-100`
-
-// Cycle-state colors — the exact GREEN/YELLOW/RED from db.ts's cycleColor, so
-// the wizard's Fresh/Due soon/Overdue chips read as the same visual language
-// as the main list's drop bars.
-const GOOD = '#5ea02e'
-const SOSO = '#e0a500'
-const UGLY = '#e24b4a'
-
-const STATUS_ICON: Record<TaskStatus, LucideIcon> = { fresh: Sparkles, soon: Moon, overdue: CircleAlert }
-const STATUS_LABEL: Record<TaskStatus, string> = { fresh: 'Fresh', soon: 'Due soon', overdue: 'Overdue' }
-const STATUS_COLOR: Record<TaskStatus, string> = { fresh: GOOD, soon: SOSO, overdue: UGLY }
-
-function EquipIcon({ name, className }: { name: string; className?: string }) {
-  const Icon = resolveIcon(name) ?? Sparkles
-  return <Icon className={className} strokeWidth={1.8} aria-hidden="true" />
-}
+import { roomIcon } from './lib/icons'
+import {
+  CARD,
+  CTA,
+  CTA_GHOST,
+  ToggleRow,
+  FreqStepper,
+  DecidedTaskRow,
+  TaskDecideCard,
+  RoomTypeWheel,
+  cfgSteps,
+  roomSetLine,
+  RoomConfigAccordion,
+  type ConfigStep,
+} from './components/wizard-shared'
 
 // ---------------------------------------------------------------------------
 // Wizard-local draft state — mirrors the approved mockup's `state.rooms`
@@ -65,7 +37,6 @@ function EquipIcon({ name, className }: { name: string; className?: string }) {
 // ---------------------------------------------------------------------------
 
 type Screen = 'profile' | 'roomselect' | 'config' | 'tasks' | 'overview'
-type ConfigStep = 'size' | 'windows' | 'floor' | 'equipment'
 
 interface DraftRoom {
   type: RoomType
@@ -79,80 +50,8 @@ interface DraftRoom {
   tasks: SuggestedTask[]
 }
 
-function cfgSteps(type: RoomType): ConfigStep[] {
-  return LIB[type].noFloor ? ['size', 'windows', 'equipment'] : ['size', 'windows', 'floor', 'equipment']
-}
-
 function emptyDraftRoom(type: RoomType, name: string): DraftRoom {
   return { type, name, sizeClass: null, windows: null, floor: null, equipment: [], tasks: [] }
-}
-
-// ---------------------------------------------------------------------------
-// Room-type wheel — the "add another room" horizontal scroll-snap picker.
-// Same centering/reconcile pattern as the main app's duration WheelPicker
-// (App.tsx), adapted for text labels instead of numbers.
-// ---------------------------------------------------------------------------
-
-const ROOM_WHEEL_ITEM_W = 116
-const ROOM_WHEEL_ROW_H = 40
-
-function RoomTypeWheel({ index, onChange }: { index: number; onChange: (i: number) => void }) {
-  const ref = useRef<HTMLDivElement>(null)
-
-  const handleScroll = () => {
-    const el = ref.current
-    if (!el) return
-    const idx = Math.min(
-      WHEEL_ROOM_TYPES.length - 1,
-      Math.max(0, Math.round(el.scrollLeft / ROOM_WHEEL_ITEM_W)),
-    )
-    if (idx !== index) onChange(idx)
-  }
-
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    el.scrollLeft = index * ROOM_WHEEL_ITEM_W
-    const raf = requestAnimationFrame(() => {
-      el.scrollLeft = index * ROOM_WHEEL_ITEM_W
-    })
-    return () => cancelAnimationFrame(raf)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  return (
-    <div
-      className="relative flex-1 overflow-hidden rounded-lg bg-neutral-100 dark:bg-neutral-800"
-      style={{ height: ROOM_WHEEL_ROW_H }}
-    >
-      <div
-        className="pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 rounded-md bg-white shadow-sm dark:bg-neutral-950"
-        style={{ width: ROOM_WHEEL_ITEM_W - 8 }}
-        aria-hidden="true"
-      />
-      <div
-        ref={ref}
-        onScroll={handleScroll}
-        className="wheel-scroll relative flex h-full snap-x snap-mandatory overflow-x-scroll"
-      >
-        <div className="shrink-0" style={{ width: `calc(50% - ${ROOM_WHEEL_ITEM_W / 2}px)` }} />
-        {WHEEL_ROOM_TYPES.map((type, i) => (
-          <div
-            key={type}
-            className={`flex h-full shrink-0 snap-center items-center justify-center whitespace-nowrap px-1 text-center transition-colors ${
-              i === index
-                ? 'text-[13px] font-bold text-neutral-900 dark:text-neutral-100'
-                : 'text-[13px] font-medium text-neutral-400 dark:text-neutral-600'
-            }`}
-            style={{ width: ROOM_WHEEL_ITEM_W }}
-          >
-            {TYPE_META[type]}
-          </div>
-        ))}
-        <div className="shrink-0" style={{ width: `calc(50% - ${ROOM_WHEEL_ITEM_W / 2}px)` }} />
-      </div>
-    </div>
-  )
 }
 
 // ---------------------------------------------------------------------------
@@ -526,37 +425,6 @@ export default function Wizard() {
 // Screen: home profile
 // ---------------------------------------------------------------------------
 
-function ToggleRow({
-  icon: Icon,
-  label,
-  on,
-  onToggle,
-}: {
-  icon: LucideIcon
-  label: string
-  on: boolean
-  onToggle: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={`mb-2 flex w-full items-center gap-3 ${CARD} px-3.5 py-3.5 text-left`}
-    >
-      <Icon className="h-5 w-5 shrink-0 text-neutral-500 dark:text-neutral-400" strokeWidth={1.8} aria-hidden="true" />
-      <span className="flex-1 text-[15px] font-semibold text-neutral-900 dark:text-neutral-100">{label}</span>
-      <span
-        className={`relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors ${on ? '' : 'bg-neutral-200 dark:bg-neutral-700'}`}
-        style={on ? { backgroundColor: GOOD } : undefined}
-      >
-        <span
-          className={`absolute top-[3px] h-5 w-5 rounded-full bg-white shadow transition-all ${on ? 'left-[21px]' : 'left-[3px]'}`}
-        />
-      </span>
-    </button>
-  )
-}
-
 function ProfileScreen({
   profile,
   setProfile,
@@ -673,31 +541,6 @@ function RoomSelectScreen({
 // Screen: per-room config accordion
 // ---------------------------------------------------------------------------
 
-function AnsweredRow({ label, value, onEdit }: { label: string; value: string; onEdit: () => void }) {
-  return (
-    <button type="button" onClick={onEdit} className={`mb-1.5 flex w-full items-center gap-2.5 ${CARD} px-3 py-2.5 text-left`}>
-      <span className="w-16 shrink-0 text-[11px] font-semibold text-neutral-400 dark:text-neutral-500">{label}</span>
-      <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-neutral-900 dark:text-neutral-100">{value}</span>
-      <span className="shrink-0 text-[11px] text-neutral-400 dark:text-neutral-500">edit</span>
-    </button>
-  )
-}
-
-function compactValue(room: DraftRoom, step: ConfigStep): string {
-  if (step === 'size') {
-    const s = SIZES.find((s) => s.key === room.sizeClass)
-    return s ? `${s.label} · ${s.range}` : ''
-  }
-  if (step === 'windows') return WINDOWS.find((w) => w.count === room.windows)?.label ?? ''
-  if (step === 'floor') return FLOORS.find((f) => f.key === room.floor)?.label ?? ''
-  const labels = room.equipment.map((k) =>
-    k.startsWith('custom:') ? k.slice(7) : (LIB[room.type].equipment.find((e) => e.key === k)?.label ?? k),
-  )
-  return labels.length ? labels.join(', ') : 'Empty'
-}
-
-const STEP_LABEL: Record<ConfigStep, string> = { size: 'Size', windows: 'Windows', floor: 'Floor', equipment: 'Inside' }
-
 function ConfigScreen({
   room,
   cfgStep,
@@ -727,166 +570,31 @@ function ConfigScreen({
 }) {
   const steps = cfgSteps(room.type)
   const compactSteps = steps.slice(0, cfgStep)
-  const cur = steps[cfgStep]
-  const lib = LIB[room.type]
+  const openStep = steps[cfgStep] ?? null
 
   return (
-    <>
-      {compactSteps.map((step) => (
-        <AnsweredRow key={step} label={STEP_LABEL[step]} value={compactValue(room, step)} onEdit={() => reopenStep(step)} />
-      ))}
-
-      <div className={`${CARD} mt-2.5 p-4`}>
-        {cur === 'size' && (
-          <>
-            <h3 className="mb-3 text-[16px] font-bold text-neutral-900 dark:text-neutral-100">How big is {room.name}?</h3>
-            <div className="flex flex-wrap gap-1.5">
-              {SIZES.map((s) => (
-                <button
-                  key={s.key}
-                  type="button"
-                  onClick={() => answerStep('size', s.key)}
-                  className="rounded-lg border border-black/5 bg-neutral-50 px-3.5 py-2.5 text-left text-[13.5px] font-semibold text-neutral-900 dark:border-white/10 dark:bg-neutral-800 dark:text-neutral-100"
-                >
-                  {s.label}
-                  <span className="block text-[10.5px] font-normal text-neutral-400 dark:text-neutral-500">{s.range}</span>
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-
-        {cur === 'windows' && (
-          <>
-            <h3 className="mb-3 text-[16px] font-bold text-neutral-900 dark:text-neutral-100">Windows?</h3>
-            <div className="flex flex-wrap gap-1.5">
-              {WINDOWS.map((w) => (
-                <button
-                  key={w.count}
-                  type="button"
-                  onClick={() => answerStep('windows', w.count)}
-                  className="rounded-lg border border-black/5 bg-neutral-50 px-3.5 py-2.5 text-[13.5px] font-semibold text-neutral-900 dark:border-white/10 dark:bg-neutral-800 dark:text-neutral-100"
-                >
-                  {w.label}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-
-        {cur === 'floor' && (
-          <>
-            <h3 className="mb-3 text-[16px] font-bold text-neutral-900 dark:text-neutral-100">What's on the floor?</h3>
-            <div className="flex flex-wrap gap-1.5">
-              {FLOORS.map((f) => (
-                <button
-                  key={f.key}
-                  type="button"
-                  onClick={() => answerStep('floor', f.key)}
-                  className="rounded-lg border border-black/5 bg-neutral-50 px-3.5 py-2.5 text-left text-[13.5px] font-semibold text-neutral-900 dark:border-white/10 dark:bg-neutral-800 dark:text-neutral-100"
-                >
-                  {f.label}
-                  <span className="block text-[10.5px] font-normal text-neutral-400 dark:text-neutral-500">{f.description}</span>
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-
-        {cur === 'equipment' && (
-          <>
-            <h3 className="mb-3 text-[16px] font-bold text-neutral-900 dark:text-neutral-100">What's in here?</h3>
-            <div className="grid grid-cols-2 gap-2">
-              {lib.equipment.map((e) => {
-                const selected = room.equipment.includes(e.key)
-                return (
-                  <button
-                    key={e.key}
-                    type="button"
-                    onClick={() => toggleEquip(e.key)}
-                    className={`flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-center ${
-                      selected
-                        ? 'border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900'
-                        : 'border-black/5 bg-neutral-50 text-neutral-900 dark:border-white/10 dark:bg-neutral-800 dark:text-neutral-100'
-                    }`}
-                  >
-                    <EquipIcon name={e.icon} className="h-5 w-5" />
-                    <span className="text-[12.5px] font-semibold">{e.label}</span>
-                  </button>
-                )
-              })}
-              {room.equipment
-                .filter((k) => k.startsWith('custom:'))
-                .map((k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => removeCustomEquip(k)}
-                    className="flex flex-col items-center gap-1.5 rounded-xl border border-neutral-900 bg-neutral-900 px-2 py-3 text-center text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-                  >
-                    <Sparkles className="h-5 w-5" aria-hidden="true" />
-                    <span className="text-[12.5px] font-semibold">{k.slice(7)}</span>
-                  </button>
-                ))}
-              <button
-                type="button"
-                onClick={() => setShowEquipAdd(!showEquipAdd)}
-                className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-black/15 bg-neutral-50 px-2 py-3 text-center text-neutral-500 dark:border-white/15 dark:bg-neutral-800 dark:text-neutral-400"
-              >
-                <Plus className="h-5 w-5" aria-hidden="true" />
-                <span className="text-[12.5px] font-semibold">Add</span>
-              </button>
-            </div>
-
-            {showEquipAdd && (
-              <div className="mt-2.5 flex gap-1.5">
-                <input
-                  autoFocus
-                  value={customEquipName}
-                  onChange={(e) => setCustomEquipName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addCustomEquip()}
-                  placeholder="e.g. Aquarium, piano…"
-                  className="flex-1 rounded-lg border border-black/5 bg-neutral-50 px-3 py-2 text-[13.5px] text-neutral-900 outline-none dark:border-white/10 dark:bg-neutral-800 dark:text-neutral-100"
-                />
-                <button
-                  type="button"
-                  onClick={addCustomEquip}
-                  className="rounded-lg bg-neutral-900 px-4 text-[13px] font-semibold text-white dark:bg-neutral-100 dark:text-neutral-900"
-                >
-                  Add
-                </button>
-              </div>
-            )}
-
-            <button type="button" onClick={confirmEquip} className={`${CTA} mt-3`}>
-              {room.equipment.length ? 'Continue' : 'Empty — continue'}
-            </button>
-          </>
-        )}
-      </div>
-    </>
+    <RoomConfigAccordion
+      room={room}
+      openStep={openStep}
+      compactSteps={compactSteps}
+      onAnswer={answerStep}
+      onReopen={reopenStep}
+      toggleEquip={toggleEquip}
+      showEquipAdd={showEquipAdd}
+      setShowEquipAdd={setShowEquipAdd}
+      customEquipName={customEquipName}
+      setCustomEquipName={setCustomEquipName}
+      addCustomEquip={addCustomEquip}
+      removeCustomEquip={removeCustomEquip}
+      equipCtaLabel={room.equipment.length ? 'Continue' : 'Empty — continue'}
+      onEquipCta={confirmEquip}
+    />
   )
 }
 
 // ---------------------------------------------------------------------------
 // Screen: task-by-task + own-task
 // ---------------------------------------------------------------------------
-
-function DecidedTaskRow({ task }: { task: SuggestedTask }) {
-  const StatusIcon = STATUS_ICON[task.status]
-  return (
-    <div className={`mb-1.5 flex items-center gap-2.5 ${CARD} px-3 py-2`}>
-      <StatusIcon className="h-4 w-4 shrink-0" style={{ color: STATUS_COLOR[task.status] }} aria-hidden="true" />
-      <div className="min-w-0 flex-1 truncate text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
-        {task.name}
-        <span className="ml-1.5 text-[11px] font-normal text-neutral-400 dark:text-neutral-500">
-          {fmtFreq(task.frequencyDays)} · ~{task.durationMinutes}m
-        </span>
-      </div>
-      <Check className="h-3.5 w-3.5 shrink-0 text-neutral-300 dark:text-neutral-600" aria-hidden="true" />
-    </div>
-  )
-}
 
 function TasksScreen({
   room,
@@ -920,7 +628,7 @@ function TasksScreen({
     return (
       <>
         {decidedRows.map((t, i) => (
-          <DecidedTaskRow key={i} task={t} />
+          <DecidedTaskRow key={i} name={t.name} frequencyDays={t.frequencyDays} durationMinutes={t.durationMinutes} status={t.status} />
         ))}
         <div className={`${CARD} mt-2.5 p-4`}>
           <h3 className="text-[16px] font-bold text-neutral-900 dark:text-neutral-100">Your own task for {room.name}?</h3>
@@ -934,25 +642,7 @@ function TasksScreen({
           <div className="mb-1 mt-3 text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
             How often?
           </div>
-          <div className="flex items-center gap-2 rounded-lg bg-neutral-100 p-1.5 dark:bg-neutral-800">
-            <button
-              type="button"
-              onClick={() => stepOwnFreq(-1)}
-              className="flex h-9 w-9 items-center justify-center rounded-md border border-black/5 bg-white text-neutral-900 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-100"
-            >
-              <Minus className="h-4 w-4" aria-hidden="true" />
-            </button>
-            <div className="flex-1 text-center text-[14.5px] font-bold text-neutral-900 dark:text-neutral-100">
-              {fmtFreq(ownFreq)}
-            </div>
-            <button
-              type="button"
-              onClick={() => stepOwnFreq(1)}
-              className="flex h-9 w-9 items-center justify-center rounded-md border border-black/5 bg-white text-neutral-900 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-100"
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </div>
+          <FreqStepper value={ownFreq} suggested={null} onDec={() => stepOwnFreq(-1)} onInc={() => stepOwnFreq(1)} />
           <button type="button" onClick={addOwnTask} className={`${CTA} mt-3`}>
             Add this task
           </button>
@@ -967,84 +657,20 @@ function TasksScreen({
   return (
     <>
       {decidedRows.map((t, i) => (
-        <DecidedTaskRow key={i} task={t} />
+        <DecidedTaskRow key={i} name={t.name} frequencyDays={t.frequencyDays} durationMinutes={t.durationMinutes} status={t.status} />
       ))}
-      <div className={`${CARD} mt-2.5 p-4`}>
-        <div className="text-[17px] font-bold text-neutral-900 dark:text-neutral-100">{task.name}</div>
-        <div className="mb-3 mt-0.5 text-[12px] text-neutral-400 dark:text-neutral-500">
-          takes about {task.durationMinutes} min · {ti + 1} of {room.tasks.length} suggestions
-        </div>
-
-        <div className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
-          How often?
-        </div>
-        <div className="flex items-center gap-2 rounded-lg bg-neutral-100 p-1.5 dark:bg-neutral-800">
-          <button
-            type="button"
-            onClick={() => stepFreq(-1)}
-            className="flex h-9 w-9 items-center justify-center rounded-md border border-black/5 bg-white text-neutral-900 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-100"
-          >
-            <Minus className="h-4 w-4" aria-hidden="true" />
-          </button>
-          <div className="flex-1 text-center">
-            <div className="text-[14.5px] font-bold text-neutral-900 dark:text-neutral-100">{fmtFreq(task.frequencyDays)}</div>
-            {task.frequencyDays !== task.suggestedFrequencyDays ? (
-              <div className="text-[10.5px] font-semibold" style={{ color: SOSO }}>
-                suggested {fmtFreq(task.suggestedFrequencyDays)}
-              </div>
-            ) : (
-              <div className="text-[10.5px] font-medium text-neutral-400 dark:text-neutral-500">suggested</div>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => stepFreq(1)}
-            className="flex h-9 w-9 items-center justify-center rounded-md border border-black/5 bg-white text-neutral-900 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-100"
-          >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="mb-1.5 mt-3 text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
-          State right now
-        </div>
-        <div className="flex gap-1.5">
-          {(['fresh', 'soon', 'overdue'] as const).map((s) => {
-            const StatusIcon = STATUS_ICON[s]
-            const selected = task.status === s
-            return (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setTaskStatus(s)}
-                className="flex-1 rounded-lg border px-2 py-2 text-center text-[11.5px] font-semibold"
-                style={
-                  selected
-                    ? { borderColor: STATUS_COLOR[s], backgroundColor: `${STATUS_COLOR[s]}20`, color: STATUS_COLOR[s] }
-                    : undefined
-                }
-                data-selected={selected}
-              >
-                <StatusIcon
-                  className={`mx-auto mb-1 h-4 w-4 ${selected ? '' : 'text-neutral-400 dark:text-neutral-500'}`}
-                  style={selected ? { color: STATUS_COLOR[s] } : undefined}
-                  aria-hidden="true"
-                />
-                <span className={selected ? '' : 'text-neutral-500 dark:text-neutral-400'}>{STATUS_LABEL[s]}</span>
-              </button>
-            )
-          })}
-        </div>
-
-        <div className="mt-3.5 flex gap-2">
-          <button type="button" onClick={() => decideTask(false)} className={`flex-1 ${CTA_GHOST}`}>
-            Skip
-          </button>
-          <button type="button" onClick={() => decideTask(true)} className={`flex-1 ${CTA}`}>
-            Add task
-          </button>
-        </div>
-      </div>
+      <TaskDecideCard
+        name={task.name}
+        durationMinutes={task.durationMinutes}
+        indexLabel={`${ti + 1} of ${room.tasks.length} suggestions`}
+        frequencyDays={task.frequencyDays}
+        suggestedFrequencyDays={task.suggestedFrequencyDays}
+        onStepFreq={stepFreq}
+        status={task.status}
+        onSetStatus={setTaskStatus}
+        onSkip={() => decideTask(false)}
+        onAdd={() => decideTask(true)}
+      />
     </>
   )
 }
@@ -1079,13 +705,7 @@ function OverviewScreen({
 
       {rooms.map((room, i) => {
         const added = room.tasks.filter((t) => t.added)
-        const setLine = [
-          SIZES.find((s) => s.key === room.sizeClass)?.label,
-          WINDOWS.find((w) => w.count === room.windows)?.label,
-          !LIB[room.type].noFloor ? FLOORS.find((f) => f.key === room.floor)?.label : null,
-        ]
-          .filter(Boolean)
-          .join(' · ')
+        const setLine = roomSetLine(room)
         const isExpanded = expanded.has(i)
         const RoomIcon = roomIcon(room.type)
 

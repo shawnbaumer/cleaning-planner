@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { Check, Play } from 'lucide-react'
+import { Check, CircleCheck, Play, Settings, Timer } from 'lucide-react'
 import Wizard from './Wizard'
+import Manage from './Manage'
 import {
   db,
   logCompletion,
   msUntilDue,
+  percentDue,
   urgencyBand,
   axisFrac,
   axisX,
@@ -23,8 +25,14 @@ import {
 import { roomIcon, iconForTask } from './lib/icons'
 
 // Duration wheel values for the "Complete" path's Apple-timer-style picker —
-// 5-minute increments from 5 to 90.
+// 5-minute increments from 5 to 90. Reused as-is for Focus mode's "how many
+// minutes" picker.
 const WHEEL_VALUES = Array.from({ length: 18 }, (_, i) => (i + 1) * 5)
+
+// Focus mode ("give me X minutes"): a task is eligible for the plan once
+// it's at least 75% through its cycle — the 'soon' and 'overdue' urgency
+// bands. Freshly-done tasks are never suggested.
+const FOCUS_ELIGIBLE_PD = 75
 
 // The drop's fill/path geometry is defined on a 0-200 x-axis (see db.ts's
 // X0/X_RIGHT), but the bar's SVG viewBox starts slightly left of that (at
@@ -70,20 +78,20 @@ const FLIP_EASING = 'cubic-bezier(0.25, 0.8, 0.25, 1)'
  * scroll position) captured on the *previous* render against the current
  * one, then plays the delta back as a transform that eases to zero.
  *
- * Suppressed across a `viewMode` change (Urgency ↔ Rooms) — that's a
- * different list shape, not a reorder, so the previous-position map is
- * dropped instead of diffed. Only applies to each task's own `<li>`; a
- * room *section* reordering in Rooms view is not animated (its header/list
- * wrapper isn't tracked here) — see CLAUDE.md.
+ * Suppressed across a `shapeKey` change (Urgency ↔ Rooms, or entering/
+ * exiting Focus mode) — that's a different list shape, not a reorder, so
+ * the previous-position map is dropped instead of diffed. Only applies to
+ * each task's own `<li>`; a room *section* reordering in Rooms view is not
+ * animated (its header/list wrapper isn't tracked here) — see CLAUDE.md.
  */
-function useFlip(viewMode: ViewMode) {
+function useFlip(shapeKey: string) {
   const elsRef = useRef(new Map<number, HTMLElement>())
   const prevTopsRef = useRef(new Map<number, number>())
-  const prevViewModeRef = useRef(viewMode)
+  const prevShapeKeyRef = useRef(shapeKey)
 
   useLayoutEffect(() => {
-    const viewChanged = prevViewModeRef.current !== viewMode
-    prevViewModeRef.current = viewMode
+    const viewChanged = prevShapeKeyRef.current !== shapeKey
+    prevShapeKeyRef.current = shapeKey
     if (viewChanged) prevTopsRef.current.clear()
 
     const moves: Array<[HTMLElement, number]> = []
@@ -285,6 +293,7 @@ function TaskCard({
   task,
   room,
   showRoomLabel,
+  showEstimate = false,
   isActive,
   onActivate,
   onClose,
@@ -293,6 +302,8 @@ function TaskCard({
   task: Task
   room: Room | undefined
   showRoomLabel: boolean
+  /** Focus mode only: a small muted "~Xm" after the room label, showing estimatedDurationMinutes. */
+  showEstimate?: boolean
   isActive: boolean
   onActivate: () => void
   onClose: () => void
@@ -518,6 +529,11 @@ function TaskCard({
                 {room.name}
               </span>
             )}
+            {showEstimate && (
+              <span className="shrink-0 text-xs font-semibold text-neutral-500 dark:text-neutral-400">
+                ~{task.estimatedDurationMinutes}m
+              </span>
+            )}
           </div>
         </div>
         <span className={`shrink-0 text-xs font-semibold ${statusColor}`}>
@@ -650,14 +666,141 @@ function TaskCard({
 }
 
 // ---------------------------------------------------------------------------
+// Focus mode ("give me X minutes") — pick a time budget, get a static,
+// greedily-packed subset of due/overdue tasks to work through.
+// ---------------------------------------------------------------------------
+
+/**
+ * A Focus plan, computed once when "Go" is tapped and never recomputed —
+ * `ids` is the fixed set of picked tasks in urgency order, `planStart` is
+ * used to tell whether a planned task has since been completed (its
+ * `lastCompletedDate` moved past `planStart`), independent of the live
+ * query refreshing the task object itself.
+ */
+interface FocusPlan {
+  ids: number[]
+  budget: number
+  /** How many eligible due/overdue tasks didn't fit and were left out. */
+  skipped: number
+  /** Total tasks picked at plan time (fixed — used for the "All done" copy). */
+  planned: number
+  /** Leftover budget minutes after packing, at plan time. */
+  left: number
+  planStart: number
+}
+
+/** A planned task counts as done once it's been completed after the plan started. */
+function isPlannedTaskDone(task: Task, plan: FocusPlan): boolean {
+  return task.lastCompletedDate !== null && task.lastCompletedDate > plan.planStart
+}
+
+const FOCUS_INV =
+  'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900'
+
+/** The inverted plan banner that replaces the view-toggle row while a Focus plan is active. */
+function FocusBanner({
+  remainingCount,
+  remainingMinutes,
+  plan,
+  onExit,
+}: {
+  remainingCount: number
+  remainingMinutes: number
+  plan: FocusPlan
+  onExit: () => void
+}) {
+  const allDone = remainingCount === 0
+  const hadPlan = plan.planned > 0
+
+  return (
+    <div className={`flex h-10 items-center gap-2.5 rounded-lg px-3 ${FOCUS_INV}`}>
+      <Timer className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+      <div className="min-w-0 flex-1 truncate text-[12.5px] font-semibold leading-tight">
+        {allDone ? (hadPlan ? 'All done' : 'Nothing due right now') : `${remainingCount} task${remainingCount === 1 ? '' : 's'} · ~${remainingMinutes} min planned`}
+        <div className="truncate text-[10.5px] font-normal opacity-65">
+          {allDone
+            ? hadPlan
+              ? `that was your ${plan.budget} minutes well spent`
+              : `enjoy your ${plan.budget} minutes`
+            : `fits your ${plan.budget} minutes${plan.skipped ? ` · ${plan.skipped} due task${plan.skipped === 1 ? '' : 's'} didn't fit` : ''}`}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onExit}
+        aria-label="Exit focus mode"
+        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md bg-white/15 text-[13px] leading-none dark:bg-black/10"
+      >
+        ✕
+      </button>
+    </div>
+  )
+}
+
+/** The quiet end-of-plan state — no confetti, no streaks. */
+function FocusEndState({
+  kind,
+  planned,
+  budget,
+  onBack,
+}: {
+  kind: 'done' | 'empty'
+  planned: number
+  budget: number
+  onBack: () => void
+}) {
+  return (
+    <div className="mt-12 text-center">
+      <CircleCheck
+        className="mx-auto mb-2.5 h-11 w-11 text-[#5ea02e]"
+        strokeWidth={1.6}
+        aria-hidden="true"
+      />
+      {kind === 'done' ? (
+        <>
+          <h3 className="mb-1 text-[17px] font-bold text-neutral-900 dark:text-neutral-100">All done</h3>
+          <p className="mb-4 text-[13px] text-neutral-500 dark:text-neutral-400">
+            {planned} task{planned === 1 ? '' : 's'} in under {budget} minutes.
+          </p>
+        </>
+      ) : (
+        <p className="mb-4 text-[13px] text-neutral-500 dark:text-neutral-400">
+          Nothing due right now — enjoy your {budget} minutes.
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={onBack}
+        className="rounded-lg border border-black/5 bg-white px-5 py-2.5 text-[13.5px] font-semibold text-neutral-900 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-100"
+      >
+        Back to the full list
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 
 function App() {
   const tasks = useLiveQuery(() => db.tasks.toArray())
   const rooms = useLiveQuery(() => db.rooms.toArray())
 
+  const [screen, setScreen] = useState<'list' | 'manage'>('list')
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>(loadViewMode)
-  const flip = useFlip(viewMode)
+
+  // Focus mode ("give me X minutes") — in-memory only, never persisted.
+  // 'pickMinutes' remembers the last-picked value for the session so
+  // reopening the picker after a Cancel doesn't reset to the 30-min default.
+  const [focusScreen, setFocusScreen] = useState<'normal' | 'pick' | 'focus'>('normal')
+  const [pickMinutes, setPickMinutes] = useState(30)
+  const [plan, setPlan] = useState<FocusPlan | null>(null)
+
+  // A different key than viewMode alone so entering/exiting Focus mode also
+  // suppresses FLIP across the drastic list-shape change (full list <-> the
+  // filtered plan), while completions *within* an active plan still glide
+  // normally (the key stays 'focus' the whole time a plan is active).
+  const flip = useFlip(focusScreen === 'focus' ? 'focus' : viewMode)
 
   const changeViewMode = (mode: ViewMode) => {
     setViewMode(mode)
@@ -684,6 +827,10 @@ function App() {
     return <Wizard />
   }
 
+  if (screen === 'manage') {
+    return <Manage onBack={() => setScreen('list')} />
+  }
+
   const roomsById = new Map<number, Room>(rooms.map((room) => [room.id, room]))
 
   // Flat, most-urgent-first list of every task — the default glanceable view.
@@ -701,12 +848,13 @@ function App() {
     .filter((group) => group.tasks.length > 0)
     .sort((a, b) => msUntilDue(a.tasks[0]) - msUntilDue(b.tasks[0]))
 
-  const renderTask = (task: Task, showRoomLabel: boolean) => (
+  const renderTask = (task: Task, showRoomLabel: boolean, showEstimate = false) => (
     <TaskCard
       key={task.id}
       task={task}
       room={roomsById.get(task.roomId)}
       showRoomLabel={showRoomLabel}
+      showEstimate={showEstimate}
       isActive={activeTaskId === task.id}
       onActivate={() => setActiveTaskId(task.id)}
       onClose={() => setActiveTaskId((id) => (id === task.id ? null : id))}
@@ -716,6 +864,57 @@ function App() {
 
   const hasTasks = tasks.length > 0
 
+  // The greedy fill — this IS the feature. Computed once, on Go; stored as a
+  // fixed set of ids so it never recomputes as time passes or tasks complete.
+  const startFocus = () => {
+    const eligible = tasks
+      .filter((task) => percentDue(task) >= FOCUS_ELIGIBLE_PD)
+      .sort((a, b) => msUntilDue(a) - msUntilDue(b))
+
+    const picked: Task[] = []
+    let left = pickMinutes
+    let skipped = 0
+    for (const task of eligible) {
+      if (task.estimatedDurationMinutes <= left) {
+        picked.push(task)
+        left -= task.estimatedDurationMinutes
+      } else {
+        skipped++
+      }
+    }
+
+    setPlan({
+      ids: picked.map((task) => task.id),
+      budget: pickMinutes,
+      skipped,
+      planned: picked.length,
+      left,
+      planStart: Date.now(),
+    })
+    setFocusScreen('focus')
+  }
+
+  const exitFocus = () => {
+    setFocusScreen('normal')
+    setPlan(null)
+  }
+
+  // Planned tasks in their fixed plan (urgency) order, filtered live against
+  // the current tasks — a task missing entirely (e.g. deleted via Manage
+  // while a plan was active) is dropped rather than crashing.
+  const plannedTasks: Task[] = plan
+    ? plan.ids
+        .map((id) => tasks.find((task) => task.id === id))
+        .filter((task): task is Task => task !== undefined)
+    : []
+  const remainingPlannedTasks = plan
+    ? plannedTasks.filter((task) => !isPlannedTaskDone(task, plan))
+    : []
+  const remainingPlannedMinutes = remainingPlannedTasks.reduce(
+    (sum, task) => sum + task.estimatedDurationMinutes,
+    0,
+  )
+
   return (
     <div className="min-h-svh bg-neutral-100 dark:bg-neutral-950">
       <header className="sticky top-0 z-40 border-b border-neutral-200 bg-white/90 backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/90">
@@ -723,40 +922,88 @@ function App() {
           <h1 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
             Cleaning Planner
           </h1>
-          {import.meta.env.DEV && (
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => randomizeTaskState()}
-              className="rounded-md bg-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 active:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-400"
+              onClick={() => setScreen('manage')}
+              aria-label="Manage home"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 active:bg-neutral-100 dark:text-neutral-400 dark:active:bg-neutral-800"
             >
-              🎲 Randomize
+              <Settings className="h-[18px] w-[18px]" strokeWidth={1.8} aria-hidden="true" />
             </button>
-          )}
+            {import.meta.env.DEV && (
+              <button
+                type="button"
+                onClick={() => randomizeTaskState()}
+                className="rounded-md bg-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 active:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-400"
+              >
+                🎲 Randomize
+              </button>
+            )}
+          </div>
         </div>
 
         {hasTasks && (
           <div className="px-4 pb-3">
-            <div className="flex rounded-lg bg-neutral-200 p-0.5 dark:bg-neutral-800">
-              {(
-                [
-                  ['urgency', 'Urgency'],
-                  ['room', 'Rooms'],
-                ] as const
-              ).map(([mode, label]) => (
+            {focusScreen === 'focus' && plan ? (
+              <FocusBanner
+                remainingCount={remainingPlannedTasks.length}
+                remainingMinutes={remainingPlannedMinutes}
+                plan={plan}
+                onExit={exitFocus}
+              />
+            ) : focusScreen === 'pick' ? (
+              <div className="flex h-10 items-center gap-2">
                 <button
-                  key={mode}
                   type="button"
-                  onClick={() => changeViewMode(mode)}
-                  className={`flex-1 rounded-md py-1.5 text-sm font-medium transition-colors ${
-                    viewMode === mode
-                      ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100'
-                      : 'text-neutral-500 dark:text-neutral-400'
-                  }`}
+                  onClick={() => setFocusScreen('normal')}
+                  className="shrink-0 px-0.5 text-[13px] font-medium text-neutral-500 dark:text-neutral-400"
                 >
-                  {label}
+                  Cancel
                 </button>
-              ))}
-            </div>
+                <WheelPicker values={WHEEL_VALUES} value={pickMinutes} onChange={setPickMinutes} />
+                <button
+                  type="button"
+                  onClick={startFocus}
+                  className={`flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-4 text-[13.5px] font-semibold ${FOCUS_INV}`}
+                >
+                  <Play className="h-[15px] w-[15px]" strokeWidth={2.2} aria-hidden="true" />
+                  {pickMinutes}m
+                </button>
+              </div>
+            ) : (
+              <div className="flex h-10 gap-2">
+                <div className="flex h-10 flex-1 rounded-lg bg-neutral-200 p-0.5 dark:bg-neutral-800">
+                  {(
+                    [
+                      ['urgency', 'Urgency'],
+                      ['room', 'Rooms'],
+                    ] as const
+                  ).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => changeViewMode(mode)}
+                      className={`flex flex-1 items-center justify-center rounded-md text-sm font-medium transition-colors ${
+                        viewMode === mode
+                          ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100'
+                          : 'text-neutral-500 dark:text-neutral-400'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFocusScreen('pick')}
+                  aria-label="Give me X minutes"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-black/5 bg-neutral-200 text-neutral-500 dark:border-white/10 dark:bg-neutral-800 dark:text-neutral-400"
+                >
+                  <Timer className="h-[17px] w-[17px]" strokeWidth={1.8} aria-hidden="true" />
+                </button>
+              </div>
+            )}
           </div>
         )}
       </header>
@@ -766,6 +1013,54 @@ function App() {
           <p className="text-center text-sm text-neutral-400 dark:text-neutral-500">
             No tasks yet.
           </p>
+        ) : focusScreen === 'focus' && plan ? (
+          remainingPlannedTasks.length === 0 ? (
+            <FocusEndState
+              kind={plan.planned > 0 ? 'done' : 'empty'}
+              planned={plan.planned}
+              budget={plan.budget}
+              onBack={exitFocus}
+            />
+          ) : (
+            <>
+              <div className="mb-2 px-3">
+                <div className="relative h-4 text-[11px] font-medium text-neutral-400 dark:text-neutral-500">
+                  <span className="absolute left-0">today</span>
+                  {AXIS_TICKS.map((tick) => (
+                    <span
+                      key={tick.label}
+                      className="absolute -translate-x-1/2"
+                      style={{ left: `${tick.percent}%` }}
+                    >
+                      {tick.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <ul className="space-y-3">
+                {remainingPlannedTasks.map((task) => renderTask(task, true, true))}
+              </ul>
+
+              {plan.skipped > 0 ? (
+                <p className="mt-3.5 text-center text-xs leading-relaxed text-neutral-400 dark:text-neutral-500">
+                  {plan.skipped} due task{plan.skipped === 1 ? '' : 's'} didn't fit in {plan.budget} min —{' '}
+                  <span className="font-semibold text-neutral-500 dark:text-neutral-400">
+                    still on the full list
+                  </span>
+                  .
+                </p>
+              ) : plan.left >= 5 ? (
+                <p className="mt-3.5 text-center text-xs leading-relaxed text-neutral-400 dark:text-neutral-500">
+                  That's everything due —{' '}
+                  <span className="font-semibold text-neutral-500 dark:text-neutral-400">
+                    ~{plan.left} min to spare
+                  </span>
+                  .
+                </p>
+              ) : null}
+            </>
+          )
         ) : (
           <>
             <div className="mb-2 px-3">

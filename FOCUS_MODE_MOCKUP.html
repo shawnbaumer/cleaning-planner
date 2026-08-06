@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Cleaning Planner — focus mode ("give me X minutes") mockup v1</title>
+<style>
+  :root {
+    --bg:#f5f5f5; --card:#fff; --text:#171717; --muted:#a3a3a3; --muted2:#737373;
+    --band:#ececec; --ring:rgba(0,0,0,.07); --inv:#171717; --invtext:#fff;
+    --good:#5ea02e; --soso:#e0a500; --ugly:#e24b4a;
+  }
+  .dark {
+    --bg:#0a0a0a; --card:#171717; --text:#f5f5f5; --muted:#737373; --muted2:#a3a3a3;
+    --band:#262626; --ring:rgba(255,255,255,.12); --inv:#f5f5f5; --invtext:#171717;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  body { margin:0; background:#d4d4d4; display:flex; justify-content:center; padding:24px 8px; }
+  .phone { width:390px; max-width:100%; height:800px; background:var(--bg); border-radius:28px; overflow:hidden;
+    box-shadow:0 12px 40px rgba(0,0,0,.35); border:1px solid rgba(0,0,0,.2); display:flex; flex-direction:column; }
+  header { background:color-mix(in srgb,var(--card) 90%,transparent); backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--ring); flex-shrink:0; }
+  .hrow { padding:12px 16px 10px; display:flex; align-items:center; gap:8px; }
+  .hrow h1 { font-size:16px; font-weight:600; color:var(--text); margin:0; flex:1; }
+  .hbtn { border:none; background:none; color:var(--muted2); cursor:pointer; padding:2px 4px; line-height:0; }
+  .hbtn .ico { width:19px; height:19px; }
+  .toggle-dark { font-size:11px; color:var(--muted2); background:var(--band); border:none; border-radius:6px; padding:5px 8px; cursor:pointer; }
+  .ico { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
+
+  /* view toggle row + focus button */
+  .vrow { display:flex; gap:8px; padding:0 16px 12px; align-items:stretch; }
+  .seg { flex:1; display:flex; background:var(--band); border-radius:9px; padding:2px; }
+  .seg button { flex:1; border:none; background:none; border-radius:7px; padding:7px 0; font-size:13.5px; font-weight:500; color:var(--muted2); cursor:pointer; }
+  .seg button.on { background:var(--card); color:var(--text); box-shadow:0 1px 2px rgba(0,0,0,.08); }
+  .focusbtn { border:1px solid var(--ring); background:var(--band); color:var(--muted2); border-radius:9px;
+    width:40px; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .focusbtn.on { background:var(--inv); border-color:var(--inv); color:var(--invtext); }
+  .focusbtn .ico { width:17px; height:17px; }
+
+  /* focus setup row (wheel + go) — replaces the toggle row while picking */
+  .frow { display:flex; gap:8px; padding:0 16px 12px; align-items:center; }
+  .wheelbox { flex:1; position:relative; height:40px; overflow:hidden; border-radius:20px; background:var(--card);
+    box-shadow:0 1px 2px rgba(0,0,0,.06); border:1px solid var(--ring); }
+  .wband { position:absolute; top:0; bottom:0; left:50%; transform:translateX(-50%); width:56px; background:var(--band); pointer-events:none; }
+  .wheel { position:relative; display:flex; height:100%; overflow-x:scroll; scroll-snap-type:x mandatory; scrollbar-width:none; align-items:center; }
+  .wheel::-webkit-scrollbar { display:none; }
+  .wsp { flex-shrink:0; width:calc(50% - 28px); }
+  .wv { flex-shrink:0; width:56px; scroll-snap-align:center; text-align:center; font-size:13px; font-weight:500; color:var(--muted);
+    font-variant-numeric:tabular-nums; }
+  .wv.sel { font-size:15px; font-weight:700; color:var(--text); }
+  .fadeL,.fadeR { position:absolute; top:0; bottom:0; width:38%; pointer-events:none; }
+  .fadeL { left:0; background:linear-gradient(to right, var(--card), transparent); }
+  .fadeR { right:0; background:linear-gradient(to left, var(--card), transparent); }
+  .gobtn { border:none; background:var(--inv); color:var(--invtext); border-radius:9px; padding:0 18px; height:40px;
+    font-size:13.5px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px; }
+  .gobtn .ico { width:15px; height:15px; stroke-width:2.2; }
+  .cancelbtn { border:none; background:none; color:var(--muted2); font-size:13px; font-weight:500; cursor:pointer; padding:0 2px; }
+
+  /* focus plan banner */
+  .fbanner { margin:0 16px 10px; background:var(--inv); color:var(--invtext); border-radius:11px;
+    padding:9px 12px; display:flex; align-items:center; gap:9px; flex-shrink:0; }
+  .fbanner .ico { width:16px; height:16px; stroke-width:2; }
+  .fbanner .txt { flex:1; font-size:12.5px; font-weight:600; }
+  .fbanner .txt small { display:block; font-size:10.5px; font-weight:400; opacity:.65; margin-top:1px; }
+  .fbanner .x { border:none; background:color-mix(in srgb,var(--invtext) 14%,transparent); color:var(--invtext);
+    border-radius:7px; width:26px; height:26px; font-size:13px; line-height:1; cursor:pointer; flex-shrink:0; }
+
+  .scroll { flex:1; overflow-y:auto; padding:14px 16px 24px; }
+  .axis { position:relative; height:14px; margin:0 12px 8px; font-size:10.5px; font-weight:500; color:var(--muted); }
+  .axis span { position:absolute; transform:translateX(-50%); }
+  .axis span:first-child { transform:none; }
+
+  .ptile { background:var(--card); border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.06); padding:10px 12px; margin-bottom:9px;
+    transition:opacity .35s, transform .35s; cursor:pointer; }
+  .ptile:active { transform:scale(.97); }
+  .ptile.gone { opacity:0; transform:scale(.94); pointer-events:none; }
+  .ptile .r1 { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .ptile .n { font-size:14px; font-weight:500; color:var(--text); min-width:0; }
+  .ptile .n small { font-size:11px; color:var(--muted); font-weight:400; margin-left:6px; }
+  .ptile .n .est { color:var(--muted2); font-weight:600; }
+  .ptile .d { font-size:11.5px; font-weight:600; flex-shrink:0; }
+  .ptile svg.bar { display:block; width:100%; margin-top:7px; }
+
+  .foot { text-align:center; font-size:12px; color:var(--muted); margin:14px 0 4px; line-height:1.5; }
+  .foot b { color:var(--muted2); font-weight:600; }
+  .alldone { text-align:center; margin-top:48px; }
+  .alldone .big { font-size:34px; margin-bottom:10px; color:var(--good); }
+  .alldone .big svg { width:44px; height:44px; stroke:var(--good); fill:none; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+  .alldone h3 { font-size:17px; font-weight:700; color:var(--text); margin:0 0 4px; }
+  .alldone p { font-size:13px; color:var(--muted2); margin:0 0 18px; }
+  .alldone button { border:1px solid var(--ring); background:var(--card); color:var(--text); border-radius:10px;
+    padding:11px 22px; font-size:13.5px; font-weight:600; cursor:pointer; }
+  .hint { display:flex; gap:10px; align-items:center; background:var(--band); border-radius:11px; padding:11px 13px;
+    font-size:12.5px; color:var(--muted2); margin-top:8px; line-height:1.4; }
+</style>
+</head>
+<body>
+<div class="phone" id="phone">
+  <header id="hdr"></header>
+  <div class="scroll" id="scr"></div>
+</div>
+
+<script>
+// ============ icons ==========================================================
+const I_TIMER='<svg class="ico" viewBox="0 0 24 24"><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></svg>';
+const I_PLAY='<svg class="ico" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3" fill="currentColor" stroke="none"/></svg>';
+const I_CHECKBIG='<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m8 12.5 2.7 2.7L16.5 9"/></svg>';
+
+// ============ axis / drop-bar geometry (same as the app) ====================
+const X0=6.5,XR=197.25,AXIS_D=Math.log(15)/0.9;
+const axisFrac=x=>x<=0?0:Math.min(1,Math.log(1+x)/AXIS_D);
+const axisX=f=>X0+f*(XR-X0);
+function hornPath(c){const H=13,k=1.5,cy=10,R=H/2,N=46;const xE=axisX(axisFrac(c));
+const h=x=>H*Math.exp(-k*(x-X0)/(XR-X0));const rr=Math.max(1.1,h(xE)/2),xB=xE-rr;
+const xs=Array.from({length:N+1},(_,i)=>X0+(xB-X0)*(i/N));
+let p=`M ${X0} ${(cy-H/2).toFixed(2)}`;for(const x of xs)p+=` L ${x.toFixed(1)} ${(cy-h(x)/2).toFixed(2)}`;
+p+=` A ${rr.toFixed(2)} ${rr.toFixed(2)} 0 0 1 ${xB.toFixed(1)} ${(cy+h(xB)/2).toFixed(2)}`;
+for(let i=xs.length-1;i>=0;i--)p+=` L ${xs[i].toFixed(1)} ${(cy+h(xs[i])/2).toFixed(2)}`;
+p+=` A ${R} ${R} 0 0 1 ${X0} ${(cy-H/2).toFixed(2)} Z`;return p;}
+const GREEN=[94,160,46],YELLOW=[224,165,0],RED=[226,75,74];
+const hx=c=>'#'+c.map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+const mx=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
+
+// ============ demo task set (pd = percent-of-cycle elapsed) =================
+// A realistic evening: several overdue, some due soon, some fresh.
+let seq=0;
+const T=(n,room,f,d,pd)=>({id:++seq,n,room,f,d,pd,done:false});
+const tasks=[
+  T('Clean toilet','Bathroom',7,15,145),
+  T('Deep-wipe counters & hob','Kitchen',2,10,130),
+  T('Water plants','Living room',4,5,118),
+  T('Vacuum floor & rugs','Living room',4,20,104),
+  T('Change bed sheets','Bedroom',7,15,98),
+  T('Clean sink & drain','Kitchen',7,10,92),
+  T('Swap towels','Bathroom',4,5,88),
+  T('Clean fridge & check expiry','Kitchen',30,20,84),
+  T('Wipe remotes, switches & handles','Living room',7,5,79),
+  T('Shake out doormat','Hallway',7,5,62),
+  T('Wipe mirror','Bedroom',14,5,45),
+  T('Dust surfaces','Bedroom',7,10,22),
+  T('Mop floor','Kitchen',7,15,12),
+];
+const dueIn=t=>t.f*(1-t.pd/100);
+const fmtDue=t=>{const x=dueIn(t);return x<-0.5?`${Math.round(-x)}d over`:x<0.5?'Today':`${Math.round(x)}d`;};
+
+// ============ focus plan (the greedy fill — this IS the feature) ============
+// Eligible: due-ish tasks (pd >= 75, i.e. the 'soon' and 'overdue' bands).
+// Sorted most-urgent-first, then greedily take every task whose estimate
+// still fits the remaining budget (a too-big task is skipped, smaller ones
+// after it can still fit).
+const FOCUS_ELIGIBLE_PD=75;
+function planFor(budget){
+  const due=tasks.filter(t=>!t.done&&t.pd>=FOCUS_ELIGIBLE_PD).sort((a,b)=>dueIn(a)-dueIn(b));
+  const picked=[],skipped=[];let left=budget;
+  for(const t of due){ if(t.d<=left){picked.push(t);left-=t.d;} else skipped.push(t); }
+  return {picked,skipped,left,dueCount:due.length};
+}
+
+// ============ state =========================================================
+const WHEEL_VALUES=Array.from({length:18},(_,i)=>(i+1)*5); // 5..90, like the completion wheel
+const state={
+  mode:'list',        // list | pick | focus
+  view:'urgency',
+  minutes:30,
+  plan:null,          // {ids:[...], skipped:n, budget, planned}
+};
+
+// ============ render ========================================================
+const hdr=document.getElementById('hdr'), scr=document.getElementById('scr');
+function render(){ renderHeader(); renderList(); }
+
+function renderHeader(){
+  let second='';
+  if(state.mode==='pick'){
+    second=`<div class="frow">
+      <button class="cancelbtn" onclick="state.mode='list';render()">Cancel</button>
+      <div class="wheelbox"><div class="wband"></div>
+        <div class="wheel" id="minwheel"><div class="wsp"></div>
+          ${WHEEL_VALUES.map((v,i)=>`<div class="wv ${v===state.minutes?'sel':''}" data-v="${v}">${v}</div>`).join('')}
+        <div class="wsp"></div></div>
+        <div class="fadeL"></div><div class="fadeR"></div>
+      </div>
+      <button class="gobtn" onclick="startFocus()">${I_PLAY} ${state.minutes}m</button>
+    </div>`;
+  } else if(state.mode==='focus'){
+    const p=state.plan;
+    const remaining=p.ids.map(id=>tasks.find(t=>t.id===id)).filter(t=>!t.done);
+    const mins=remaining.reduce((s,t)=>s+t.d,0);
+    second=`<div class="fbanner">${I_TIMER}
+      <span class="txt">${remaining.length?`${remaining.length} task${remaining.length===1?'':'s'} · ~${mins} min planned`:'All done'}
+        <small>${remaining.length?`fits your ${p.budget} minutes${p.skipped?` · ${p.skipped} due task${p.skipped===1?'':'s'} didn't fit`:''}`:`that was your ${p.budget} minutes well spent`}</small>
+      </span>
+      <button class="x" onclick="exitFocus()">✕</button>
+    </div>`;
+  } else {
+    second=`<div class="vrow">
+      <div class="seg">
+        <button class="${state.view==='urgency'?'on':''}" onclick="state.view='urgency';render()">Urgency</button>
+        <button class="${state.view==='room'?'on':''}" onclick="state.view='room';render()">Rooms</button>
+      </div>
+      <button class="focusbtn" onclick="state.mode='pick';render()" title="Give me X minutes">${I_TIMER}</button>
+    </div>`;
+  }
+  hdr.innerHTML=`<div class="hrow">
+    <h1>Cleaning Planner</h1>
+    <button class="toggle-dark" onclick="document.getElementById('phone').classList.toggle('dark')">◐</button>
+  </div>${second}`;
+  if(state.mode==='pick'){
+    const wh=document.getElementById('minwheel'), W=56;
+    const idx=WHEEL_VALUES.indexOf(state.minutes);
+    wh.scrollLeft=idx*W;
+    requestAnimationFrame(()=>{wh.scrollLeft=idx*W;});
+    wh.addEventListener('scroll',()=>{
+      const i=Math.min(WHEEL_VALUES.length-1,Math.max(0,Math.round(wh.scrollLeft/W)));
+      if(WHEEL_VALUES[i]!==state.minutes){ state.minutes=WHEEL_VALUES[i];
+        wh.querySelectorAll('.wv').forEach(el=>el.classList.toggle('sel',+el.dataset.v===state.minutes));
+        document.querySelector('.gobtn').innerHTML=`${I_PLAY} ${state.minutes}m`; }
+    },{passive:true});
+  }
+}
+
+function tile(t,showRoom=true){
+  const fill=t.pd>=100?hx(RED):hx(mx(GREEN,YELLOW,Math.min(1,t.pd/100)));
+  const stroke=hx(mx(t.pd>=100?RED:mx(GREEN,YELLOW,Math.min(1,t.pd/100)),[0,0,0],.22));
+  const sx=axisX(axisFrac(Math.max(0,dueIn(t))));
+  const dc=t.pd>=100?'#dc2626':t.pd>=75?'#d97706':'var(--muted)';
+  const inFocus=state.mode==='focus';
+  return `<div class="ptile ${t.done?'gone':''}" id="t${t.id}" onclick="${inFocus?`completeTask(${t.id})`:''}">
+    <div class="r1"><span class="n">${t.n}${showRoom?`<small>${t.room}</small>`:''}${inFocus?`<small class="est">~${t.d}m</small>`:''}</span>
+      <span class="d" style="color:${dc}">${fmtDue(t)}</span></div>
+    <svg class="bar" viewBox="0 0 200 20">
+      <defs><clipPath id="c${t.id}"><rect x="${sx}" y="0" width="200" height="20"/></clipPath></defs>
+      <path d="${hornPath(t.f)}" fill="${fill}" clip-path="url(#c${t.id})"/>
+      <path d="${hornPath(t.f)}" fill="none" stroke="${stroke}" stroke-width="0.7"/>
+    </svg></div>`;
+}
+
+function renderList(){
+  const axis=`<div class="axis"><span>today</span>${[[1,'1d'],[3,'3d'],[7,'1w'],[14,'2w']].map(([d,l])=>`<span style="left:${axisX(axisFrac(d))/200*100}%">${l}</span>`).join('')}</div>`;
+  if(state.mode==='focus'){
+    const p=state.plan;
+    const planned=p.ids.map(id=>tasks.find(t=>t.id===id));
+    const remaining=planned.filter(t=>!t.done);
+    if(!remaining.length){
+      scr.innerHTML=`<div class="alldone">
+        <div class="big">${I_CHECKBIG}</div>
+        <h3>All done</h3>
+        <p>${p.planned} task${p.planned===1?'':'s'} in under ${p.budget} minutes.</p>
+        <button onclick="exitFocus()">Back to the full list</button>
+      </div>`;
+      return;
+    }
+    scr.innerHTML=`${axis}
+      ${planned.map(t=>tile(t)).join('')}
+      ${p.left>=5&&!p.skipped?`<p class="foot">That's everything due — <b>~${p.left} min to spare</b>.</p>`:''}
+      ${p.skipped?`<p class="foot">${p.skipped} due task${p.skipped===1?'':'s'} didn't fit in ${p.budget} min — <b>still on the full list</b>.</p>`:''}
+      <p class="foot" style="opacity:.7">tap a task to complete it (mockup shortcut — the real app keeps the Start/Complete flow)</p>`;
+    return;
+  }
+  // normal list (urgency view; Rooms view unchanged by this feature)
+  const sorted=[...tasks].filter(t=>!t.done).sort((a,b)=>dueIn(a)-dueIn(b));
+  scr.innerHTML=`${axis}${sorted.map(t=>tile(t)).join('')}
+    <div class="hint">${I_TIMER}<span>This mockup is about the <b>timer button</b> ↑ next to the view toggle — tap it, pick how many minutes you've got.</span></div>`;
+}
+
+// ============ actions =======================================================
+function startFocus(){
+  const {picked,skipped,left}=planFor(state.minutes);
+  state.plan={ids:picked.map(t=>t.id),skipped:skipped.length,budget:state.minutes,left,planned:picked.length};
+  state.mode='focus';
+  render();
+}
+function exitFocus(){ state.mode='list'; state.plan=null; render(); }
+function completeTask(id){
+  const t=tasks.find(x=>x.id===id);
+  if(!t||t.done) return;
+  t.done=true;
+  document.getElementById('t'+id).classList.add('gone');
+  setTimeout(render,380);
+}
+render();
+</script>
+</body>
+</html>

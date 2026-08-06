@@ -44,8 +44,14 @@ and what fits the time available.
 │   │   ├── db.ts        Dexie database instance (IndexedDB schema lives here)
 │   │   ├── icons.tsx    Keyword→Lucide icon mapping + name→component registry
 │   │   └── library.ts   Suggestion library + task-generation for the wizard
-│   ├── App.tsx           Root component (renders Wizard on first launch)
+│   ├── components/
+│   │   └── wizard-shared.tsx  Config accordion, task-decide card, toggle row,
+│   │                          freq stepper, state chips — shared by the wizard
+│   │                          and the gear/manage screen
+│   ├── App.tsx           Root component (renders Wizard on first launch, or
+│   │                     Manage behind the gear button)
 │   ├── Wizard.tsx         First-launch home setup wizard
+│   ├── Manage.tsx         Post-setup home-management screen (the gear button)
 │   ├── main.tsx          React entry point / DOM mount
 │   └── index.css         Tailwind entry point
 ├── index.html            Vite HTML entry
@@ -148,6 +154,13 @@ resolved via the registry, falling back to `taskIcon(task.name)`).
   exists. Not wired to any UI button (unlike `randomizeTaskState`) — call it
   from the console if needed. Real first-launch setup goes through the wizard
   (see below)
+- `deleteTaskCascade(taskId)` / `deleteTasksCascade(taskIds)` —
+  deletes a task (or a batch of tasks) along with its `CompletionLog` rows,
+  in one transaction. Used by Manage's task-row delete and the config
+  re-edit's "remove all N orphaned tasks" flow
+- `deleteRoomCascade(roomId)` — deletes a room along with all of its tasks
+  and their completion logs, in one transaction. Used by Manage's
+  add/remove-rooms screen
 
 ### Suggestion library (`src/lib/library.ts`)
 
@@ -186,6 +199,13 @@ tidying — since those don't need a reminder; don't add any back.
   soon/Overdue → 5%/70%/130% of its cycle elapsed) plus random jitter in
   [−10, +10] points (clamped ≥ 0) into a `lastCompletedDate`, so day one
   looks like real life instead of a blank slate
+- `suggestedFrequencyForTask(taskName, room, profile)` — Manage's "suggested"
+  frequency line is **derived, not stored**: matches an existing task's name
+  against `buildTasks(room, profile)` for the room's *current* config and
+  returns that match's frequency, or `null` if nothing matches (a renamed
+  task, or a free-text "own" task). No schema field for this — if the room's
+  setup changes after a task was added, the suggested line reflects the new
+  setup, not whatever the task was created with
 
 ## Product direction (beyond current build)
 
@@ -199,20 +219,21 @@ lost between sessions:
   explicitly reject gamification (points, streaks, leaderboards, allowance
   systems) as adding engagement overhead rather than speed.
 - **Milestone B — setup wizard: done** (see Status below for the built
-  flow). One thing from the original plan intentionally deferred to its own
-  follow-up: the ⚙︎ gear button that reopens the wizard's overview screen as
-  the permanent post-setup home-management surface (add/remove rooms, edit a
-  room's config, re-decide tasks) — **this will be the app's only CRUD
-  surface once built; no separate add/edit-task screen is planned**. Until
-  then there's no way to add/edit/delete tasks after the wizard finishes.
-- **Milestone C — "give me X minutes":** user enters a time budget; the app
-  sorts due/overdue tasks by urgency and greedily fills the time budget using
-  `estimatedDurationMinutes`, surfacing which task(s) to do right now. No new
-  data-model fields needed — this reads directly off `percentDue` and
-  `estimatedDurationMinutes`, both already implemented.
-- **Milestone D (later/optional):** push notifications/reminders, per-plant
-  or per-furniture task customization, multi-device sync, sharing with
-  roommates.
+  flow).
+- **Gear / home-management screen: done** (see Home management below) —
+  the app's only CRUD surface (add/remove rooms, edit a room's config,
+  rename/re-frequency/delete tasks, add tasks); there is still no separate
+  add/edit-task screen, by design.
+- **Milestone C — Focus mode ("give me X minutes"): done** (see Focus mode
+  below) — a timer button next to the view toggle; pick a budget, get a
+  static, greedily-packed subset of due/overdue tasks. No new data-model
+  fields — reads directly off `percentDue`/`estimatedDurationMinutes`,
+  both already implemented.
+- **Next up:** deployment to the iPhone (PWA install/offline is already
+  built — this is about actually getting it on-device and living with it),
+  then Milestone D (later/optional): push notifications/reminders,
+  per-plant or per-furniture task customization, multi-device sync, sharing
+  with roommates.
 
 ## Status
 
@@ -348,11 +369,10 @@ testing, surfaced as a DEV-only 🎲 Randomize button in the header (hidden in
 production via `import.meta.env.DEV`); its reshuffle also glides via the same
 FLIP mechanism.
 
-No add/edit-task screen or navigation yet beyond the first-launch wizard (see
-below) — the app is otherwise read-only past marking a task done. Next up
-(still open): the ⚙︎ gear/overview management screen (the planned CRUD
-surface — see Product direction), then the "give me X minutes" suggestion
-feature (Milestone C).
+Task/room CRUD lives entirely behind the ⚙︎ gear button (see Home management
+below) — there's still no separate add/edit-task screen, by design. Focus
+mode (see below) lives behind a timer button next to the view toggle. Next
+up: deployment to the iPhone.
 
 ### Setup wizard (`src/Wizard.tsx`)
 
@@ -365,6 +385,11 @@ removed — `seedDatabase`/`randomizeTaskState` remain as DEV-only helpers, the
 🎲 button unchanged); the wizard writes directly to Dexie, so `App`'s
 `useLiveQuery` on `db.rooms` picks up the new rooms and swaps back to the
 list on its own once "Build my home" completes — no callback needed.
+
+The config accordion, task-decide card, toggle row, freq stepper, and state
+chips are extracted into `src/components/wizard-shared.tsx` and shared with
+the gear/manage screen (see Home management below) — refactored out of this
+file with no behavior change (byte-identical wizard flow before and after).
 
 Screens, in order:
 1. **Home profile** — Pets / Plants / Work-from-home toggle rows (same
@@ -423,6 +448,202 @@ Known limitation (by design, not yet addressed): wizard state lives entirely
 in memory — killing the app mid-wizard restarts it from the top. Acceptable
 for a one-time first-launch flow; worth revisiting if it becomes annoying in
 practice.
+
+### Home management (`src/Manage.tsx`)
+
+The app's **only CRUD surface** — no separate add/edit-task screen exists or
+is planned. Reached via a monochrome ⚙︎ (`Settings`) button in the main
+list's header, right of the view toggle and left of the DEV 🎲 button
+(`App.tsx`'s `screen` state, `'list' | 'manage'`); the Manage screen's own
+header back arrow returns to the list. Built from the approved
+`GEAR_MANAGEMENT_MOCKUP.html` mockup (kept in the repo root alongside the
+wizard's mockup as the design reference).
+
+**Everything on this screen saves immediately** (iOS-Settings style — no
+Save button anywhere); the only confirms are for destructive actions (delete
+task, remove room). Screens, reached from the top-level "Your home" list:
+
+1. **Household card** — collapsed shows a summary of active toggles
+   ("Pets, Plants"); expanded, the wizard's three toggle rows write straight
+   to the `homes` row on tap. Changing these **never touches an existing
+   task** — no recomputation, only future suggestions are affected (verified
+   manually: toggling Pets with existing tasks open leaves every task's
+   frequency untouched).
+2. **Room cards** — per room: icon, name, "N tasks ▾" (tap to expand), and
+   a "{size} · {windows} · {floor} · edit setup" line (tap → config re-edit,
+   below). Expanded, each task is a compact row (name + "every week · ~15m"
+   + "edit"); tapping it opens an inline editor (one open at a time — the
+   same pattern used across this screen for editor/add-panel/confirm state):
+   a name input (rename on blur, trimmed, empty ignored), a frequency
+   stepper, a read-only duration note, **Delete task** (red text → inline
+   red confirm card, cascades via `deleteTaskCascade`), and **Done**. The
+   stepper's "suggested" line is derived via `suggestedFrequencyForTask`
+   (see Suggestion library above) — never stored, so renamed/own tasks
+   simply show no suggested line.
+3. **"+ Add task"** (dashed row, inside an expanded room card) → an inline
+   panel: **"Suggestions you skipped"** (`buildTasks(room, profile)` minus
+   tasks already in the room, matched by name) as tappable rows, each
+   opening a draft card (freq stepper, Fresh/Due soon/Overdue chips,
+   Back/Add task); below a divider, **"or your own"** (free-text name + freq
+   stepper → Next → the same draft card, defaulting to 10 min/Due soon).
+   Committing writes the task immediately with `lastCompletedDate` from
+   `baselineLastCompletedDate`. Library-picked tasks carry the library's
+   icon; own tasks get **no** `icon` field at all (falls back to
+   `taskIcon`'s keyword inference, same fallback path as everything else —
+   a deliberate simplification vs. the mockup, which stores an initial-value
+   comparison for own tasks too; this app never stores anything to derive a
+   "suggested" line from, own or otherwise).
+4. **Config re-edit ("edit setup")** — the wizard's config accordion
+   (`RoomConfigAccordion` from `wizard-shared.tsx`) in **edit mode**: all
+   steps start compact/answered, nothing open initially; tapping a row opens
+   just that question, answering collapses it back to nothing open — a
+   deliberate fix of the wizard's own "reopening an early answer temporarily
+   hides the later ones" quirk (see Setup wizard above), which only applies
+   in the wizard's linear/index-based stepping. The equipment step's own CTA
+   reads "Done" and just collapses the step (no diff fires there); a
+   separate bottom **Done** button applies the change:
+   - Snapshots the config on entry (`cfg0`). On Done, computes
+     `lib0 = buildTasks(cfg0, profile)` and `lib1 = buildTasks(newConfig,
+     profile)` — **both against the current profile**, so a household
+     toggle change alone can never produce a diff here.
+   - **New suggestions** — in `lib1`, not in `lib0`, and not already a task
+     by name — route to the re-decide screen (below), one at a time.
+   - **Orphaned tasks** — existing tasks whose name is in `lib0` but not
+     `lib1` (their equipment/floor/window source was removed) — offered
+     *after* the new suggestions as a single keep-or-remove prompt ("No
+     longer part of {room}'s setup"); removing cascades via
+     `deleteTasksCascade` in one transaction. A task is only a removal
+     candidate by **name match against the library output** — there's no
+     stored "is this an own task" flag (no schema change), so a task is
+     never removed just because its *origin* was equipment; only because
+     its name matches something the library no longer generates.
+   - The room's config fields themselves (size/windows/floor/equipment)
+     persist in one `db.rooms.update` when Done is tapped, regardless of
+     whether any diff fired. No diff at all → Done returns straight to
+     Manage.
+5. **"+ Add or remove rooms"** — current rooms as rows (icon, name, task
+   count, ✕ → inline red confirm → `deleteRoomCascade`); removing the *last*
+   room is allowed and falls straight through to the app's existing
+   `rooms.length === 0` check, which relaunches the wizard (verified
+   manually — no crash, clean restart). "Add another room" reuses the
+   wizard's room-type wheel; duplicate types auto-number against the
+   current room list. Adding a room enters the config accordion in
+   **wizard mode** (steps advance as answered, same component as the
+   wizard's own per-room config — including that same reopening quirk,
+   since this path *is* the wizard's own stepping behavior) → re-decide
+   over *all* of the new room's suggestions.
+   - **Deliberate deviation from the mockup:** the mockup pushes the new
+     room into its `state.rooms` immediately and splices it back out if you
+     back out mid-config. The real app instead keeps the new room as an
+     **in-memory draft** (`Manage`'s local `cfg`/`rd` state) and writes the
+     room *and* its decided tasks in **one Dexie transaction only when
+     re-decide finishes** — so a half-built room can never appear in the
+     main list or the room list, and backing out at any point (including
+     via the header back, which steps back one question at a time before
+     finally discarding — mirroring the wizard's own back-nav) discards the
+     draft with zero writes (verified manually via IndexedDB inspection).
+6. **Re-decide screen** — shared with §4, reusing the wizard's task-by-task
+   card (`TaskDecideCard` from `wizard-shared.tsx`): decided tasks stack
+   compactly above, the current card shows name/duration/index, freq
+   stepper, Fresh/Due soon/Overdue chips, Skip/Add task. In config re-edit
+   mode it's prefaced with "Your setup change unlocked these — decide each
+   one. Nothing else changes."; the add-room path has no such preface since
+   nothing existed before. Header back skips the rest of the list and
+   finishes immediately — decided tasks still land, undecided ones are
+   dropped (implemented as a `useEffect` that fires the commit once the
+   suggestion list is exhausted and there's nothing left to prompt for
+   removal, rather than the mockup's imperative "render() falls through to
+   finish()"). Finishing returns to Manage with the affected room expanded.
+
+The screen resets its local UI state (which room/task is expanded, which
+editor is open) every time it mounts — no state persists across a gear
+open/close cycle, matching the wizard's own "lives entirely in memory while
+open" behavior.
+
+### Focus mode (`src/App.tsx`)
+
+"Give me X minutes" (Milestone C) — everything lives in `App.tsx` (a `Timer`
+button, a couple of small helper components, and some local state); no
+schema changes, no new dependencies, no changes to the Rooms view, task
+cards, completion flow, drop bars, FLIP, wizard, or gear screen beyond what's
+described here. Built from the approved `FOCUS_MODE_MOCKUP.html` mockup
+(kept in the repo root); the mockup's tap-to-complete is a mockup shortcut
+only — every card in the real app keeps the full Start/Complete flow, reset
+animation, and FLIP glide.
+
+A square `Timer` button sits to the right of the Urgency/Rooms toggle
+(`App`'s `focusScreen` state, `'normal' | 'pick' | 'focus'`). Tapping it
+swaps that same header row — same height, so the header never jumps —
+through three states:
+
+1. **Pick** — a small **Cancel** button, the minute wheel (the completion
+   flow's `WheelPicker` and `WHEEL_VALUES` reused as-is, 5–90 in 5s), and a
+   solid **Go** button showing the live "`{n}`m" value. Defaults to 30;
+   `pickMinutes` stays in component state across Cancel/reopen so it's
+   remembered for the session (never persisted).
+2. **Focus** — the plan banner (see below) replaces the row.
+3. Back to **normal** — the ✕ on the banner, or finishing/backing out,
+   restores the ordinary Urgency/Rooms toggle. `viewMode` itself (and its
+   `localStorage` persistence) is never touched by any of this — Focus mode
+   temporarily supersedes it, then hands back whatever it was.
+
+**The plan (greedy fill) — computed once, on Go, and never recomputed:**
+tasks with `percentDue(task) >= FOCUS_ELIGIBLE_PD` (75 — the 'soon' and
+'overdue' urgency bands; freshly-done tasks are never suggested) are sorted
+by `msUntilDue` ascending (most urgent first), then walked greedily: a task
+whose `estimatedDurationMinutes` still fits the remaining budget is picked
+and the budget shrinks by that amount; a task that doesn't fit is skipped
+(counted, not dropped) and the walk continues — a smaller task later in the
+list can still fit after a bigger one is skipped. The result (`FocusPlan`)
+is a fixed `{ ids, budget, skipped, planned, left, planStart }`: `ids` is
+the picked set in that fixed urgency order, `planStart` is the Go
+timestamp. The plan does not change shape as time passes or tasks complete
+— completion is detected live via `isPlannedTaskDone(task, plan)`, which is
+just `task.lastCompletedDate > plan.planStart` (robust to the live query
+handing back a fresh `Task` object with the same id).
+
+**While a plan is active:**
+- The **banner** (`FocusBanner`) is an inverted (black/white, flips with
+  dark mode) pill replacing the toggle row: a `Timer` icon, "`N` tasks ·
+  ~`X` min planned" (`N`/`X` = the *remaining* planned tasks/estimate sum,
+  live), a muted subtitle ("fits your `B` minutes" + " · `k` due tasks
+  didn't fit" when `k > 0`), and an ✕ that exits back to normal
+  (discarding the plan — Focus/plan state is in-memory only by design,
+  never persisted, so this is just `setPlan(null)`).
+- The list shows **only** the remaining planned tasks, in the plan's fixed
+  order, as ordinary `TaskCard`s (`showRoomLabel` **and** the new
+  `showEstimate` prop, which adds a small muted "~`X`m" —
+  `estimatedDurationMinutes` — after the room label; focus-only, no other
+  call site sets it).
+- **Footer**, below the list, static per the plan (not recomputed as tasks
+  complete): if `plan.skipped > 0`, "`k` due tasks didn't fit in `B` min —
+  **still on the full list**."; else if `plan.left >= 5`, "That's
+  everything due — **~`X` min to spare**."; otherwise nothing.
+- Once every planned task is done, `FocusEndState` replaces the list — a
+  big outlined `CircleCheck`, and either "All done" / "`N` tasks in under
+  `B` minutes." (a real plan that got finished) or, if the plan started
+  empty (nothing was eligible when Go was tapped), the quieter single-line
+  "Nothing due right now — enjoy your `B` minutes." Both cases share the
+  same "Back to the full list" ghost button. No confetti, no streaks — same
+  anti-gamification stance as the rest of the app.
+
+**FLIP interaction:** `useFlip` (in `App.tsx`) takes a `shapeKey` string
+instead of just `viewMode` now — `'focus'` while a plan is active,
+`viewMode` otherwise — so entering/exiting Focus mode (a drastic list-shape
+change) suppresses glide the same way an Urgency↔Rooms toggle already did,
+while completions *within* an active plan still glide normally (the key
+stays `'focus'` for the plan's whole lifetime, so a completed task
+disappearing from the filtered list still closes the gap with a FLIP glide
+on the remaining cards — there's no separate exit animation for the
+completing card itself; its own drain→blink→settle reset animation is the
+transition, and once the deferred write lands the card simply isn't in the
+next render's filtered array).
+
+Switching to the ⚙︎ gear screen and back does not lose an active plan — the
+`App` component itself never unmounts for that (it's a sibling `screen`
+state that early-returns a different render, not a route change), so
+`focusScreen`/`plan` survive untouched, consistent with "in-memory only"
+meaning *session*-scoped, not *view*-scoped.
 
 ## Commands
 

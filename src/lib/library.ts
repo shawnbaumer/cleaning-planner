@@ -356,3 +356,20 @@ export function baselineLastCompletedDate(
   const percentDue = Math.max(0, STATUS_PERCENT_DUE[status] + jitter)
   return Math.round(now - (percentDue / 100) * frequencyDays * MS_PER_DAY)
 }
+
+/**
+ * The "suggested" frequency for an existing task, derived (not stored) by
+ * matching its name against the room's current buildTasks() output — if the
+ * room's setup changed since the task was created, this reflects the
+ * *current* suggestion, not whatever the task was originally added with.
+ * Renamed tasks and free-text "own" tasks won't match anything and get
+ * `null` (no suggested line at all), which is the intended behavior.
+ */
+export function suggestedFrequencyForTask(
+  taskName: string,
+  room: DraftRoomConfig,
+  profile: HomeProfile,
+): number | null {
+  const match = buildTasks(room, profile).find((t) => t.name === taskName)
+  return match ? match.frequencyDays : null
+}

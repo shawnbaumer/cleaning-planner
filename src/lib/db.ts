@@ -452,6 +452,43 @@ const DEFAULT_TASKS: SeedTask[] = [
 ]
 
 /**
+ * Deletes a task and its completion-log history in one transaction, so a
+ * deleted task never leaves orphaned logs behind.
+ */
+export async function deleteTaskCascade(taskId: number): Promise<void> {
+  await db.transaction('rw', db.tasks, db.completionLogs, async () => {
+    await db.completionLogs.where('taskId').equals(taskId).delete()
+    await db.tasks.delete(taskId)
+  })
+}
+
+/**
+ * Deletes a set of tasks and their completion-log history in one
+ * transaction — used for the config re-decide "remove all N orphaned
+ * tasks" flow.
+ */
+export async function deleteTasksCascade(taskIds: number[]): Promise<void> {
+  if (taskIds.length === 0) return
+  await db.transaction('rw', db.tasks, db.completionLogs, async () => {
+    await db.completionLogs.where('taskId').anyOf(taskIds).delete()
+    await db.tasks.bulkDelete(taskIds)
+  })
+}
+
+/**
+ * Deletes a room along with all of its tasks and their completion-log
+ * history, in one transaction.
+ */
+export async function deleteRoomCascade(roomId: number): Promise<void> {
+  await db.transaction('rw', db.rooms, db.tasks, db.completionLogs, async () => {
+    const taskIds = await db.tasks.where('roomId').equals(roomId).primaryKeys()
+    await db.completionLogs.where('taskId').anyOf(taskIds).delete()
+    await db.tasks.where('roomId').equals(roomId).delete()
+    await db.rooms.delete(roomId)
+  })
+}
+
+/**
  * DEV-ONLY: seeds a small starter set of home/rooms/tasks, bypassing the
  * setup wizard, for quick local iteration on the main list. No-ops if any
  * rooms already exist. Superseded by the wizard for real first-launch setup.

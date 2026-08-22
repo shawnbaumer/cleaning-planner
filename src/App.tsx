@@ -346,6 +346,35 @@ function TaskCard({
   const longPressTimerRef = useRef<number | null>(null)
   const longPressFiredRef = useRef(false)
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null)
+  const tileButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  // Raw (non-passive) touch listeners for the long-press: React registers its
+  // synthetic touchstart/touchmove as passive by default, so preventDefault()
+  // inside a JSX onTouchStart/onTouchMove prop would silently do nothing.
+  // touchstart itself is deliberately a no-op — preventDefault there would
+  // also block vertical scroll for the same touch. Once the long-press timer
+  // has actually fired (longPressFiredRef flips true), the *next* touchmove
+  // or touchend for this touch is prevented instead, to stop iOS's native
+  // long-press gesture (text selection / callout) from continuing to
+  // develop — CSS (user-select/-webkit-touch-callout, see .no-select-recursive
+  // in index.css) is still the primary defense; this is a JS-level backstop.
+  useEffect(() => {
+    const el = tileButtonRef.current
+    if (!el) return
+
+    const noopTouchStart = () => {}
+    const preventIfLongPressWon = (e: TouchEvent) => {
+      if (longPressFiredRef.current) e.preventDefault()
+    }
+    el.addEventListener('touchstart', noopTouchStart, { passive: false })
+    el.addEventListener('touchmove', preventIfLongPressWon, { passive: false })
+    el.addEventListener('touchend', preventIfLongPressWon, { passive: false })
+    return () => {
+      el.removeEventListener('touchstart', noopTouchStart)
+      el.removeEventListener('touchmove', preventIfLongPressWon)
+      el.removeEventListener('touchend', preventIfLongPressWon)
+    }
+  }, [])
 
   // Collapse this card's interaction if another card becomes the active one.
   // Never interrupts an in-flight reset animation (that lives in `anim`).
@@ -666,6 +695,7 @@ function TaskCard({
     >
       {/* Base tile — always rendered; blurs behind the prompt when open. */}
       <button
+        ref={tileButtonRef}
         type="button"
         onClick={handleClick}
         onPointerDown={handlePointerDown}
@@ -673,14 +703,9 @@ function TaskCard({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onContextMenu={(e) => e.preventDefault()}
-        style={{
-          touchAction: 'pan-y',
-          WebkitTouchCallout: 'none',
-          WebkitUserSelect: 'none',
-          userSelect: 'none',
-        }}
+        style={{ touchAction: 'manipulation' }}
         aria-label={`Complete "${task.name}"`}
-        className={`block w-full rounded-xl p-3 transition ${
+        className={`no-select-recursive block w-full rounded-xl p-3 transition ${
           open
             ? 'pointer-events-none'
             : 'duration-100 active:scale-[0.97] active:bg-neutral-50 dark:active:bg-neutral-800'

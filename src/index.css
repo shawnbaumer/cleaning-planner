@@ -46,3 +46,16 @@
 .wheel-scroll::-webkit-scrollbar {
   display: none;
 }
+
+/* A task tile's long-press (opens the undo sheet) competes with iOS Safari's
+   own long-press gesture (text selection / callout), which wins unless every
+   element under the tile opts out, not just the tile itself — user-select
+   inherits in principle, but WebKit doesn't reliably honor that inheritance
+   through the tile's nested spans/svg on a real device. Applied to the
+   tile's outermost button in App.tsx. */
+.no-select-recursive,
+.no-select-recursive * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}

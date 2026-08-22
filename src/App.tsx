@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { Check, CircleCheck, Play, Settings, Timer } from 'lucide-react'
 import Wizard from './Wizard'
 import Manage from './Manage'
+import { playCompleteSound } from './sound'
 import {
   db,
   logCompletion,
@@ -579,6 +580,7 @@ function TaskCard({
   }
 
   const complete = (minutes: number) => {
+    playCompleteSound()
     playReset(minutes)
   }
 

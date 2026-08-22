@@ -6,6 +6,7 @@ import {
   PawPrint,
   Sprout as SproutIcon,
   Laptop,
+  Volume2,
   Plus,
   CircleAlert,
   type LucideIcon,
@@ -40,6 +41,7 @@ import {
   type DraftRoomConfig,
 } from './lib/library'
 import { roomIcon } from './lib/icons'
+import { isSoundEnabled, setSoundEnabled } from './sound'
 import {
   CARD,
   CTA,
@@ -111,6 +113,8 @@ export default function Manage({ onBack }: { onBack: () => void }) {
   const [screen, setScreen] = useState<ManageScreen>('manage')
   const [hhOpen, setHhOpen] = useState(false)
   const [openRooms, setOpenRooms] = useState<Set<number>>(new Set())
+
+  const [soundOn, setSoundOn] = useState(isSoundEnabled)
 
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
   const [confirmDeleteTaskId, setConfirmDeleteTaskId] = useState<number | null>(null)
@@ -697,6 +701,13 @@ export default function Manage({ onBack }: { onBack: () => void }) {
                 setScreen('rooms')
               }}
             />
+            <PreferencesSection
+              soundOn={soundOn}
+              onToggleSound={() => {
+                setSoundEnabled(!soundOn)
+                setSoundOn(!soundOn)
+              }}
+            />
             <DataSection
               importError={importError}
               pendingImport={pendingImport}
@@ -1275,6 +1286,22 @@ function ManageHomeScreen({
       <button type="button" onClick={onGoRooms} className={`${CTA_GHOST} mt-2`}>
         + Add or remove rooms
       </button>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Preferences section (app-wide, not home/room-specific) — bottom of the
+// manage screen, above Data.
+// ---------------------------------------------------------------------------
+
+function PreferencesSection({ soundOn, onToggleSound }: { soundOn: boolean; onToggleSound: () => void }) {
+  return (
+    <>
+      <div className="mb-2 mt-4 text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">Preferences</div>
+      <div className={`${CARD} p-3.5`}>
+        <ProfileSubrow icon={Volume2} label="Completion sound" on={soundOn} onToggle={onToggleSound} />
+      </div>
     </>
   )
 }

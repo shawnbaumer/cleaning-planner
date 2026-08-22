@@ -15,11 +15,15 @@ import {
   deleteTaskCascade,
   deleteTasksCascade,
   deleteRoomCascade,
+  exportAllData,
+  importAllData,
+  isExportPayload,
   type Room,
   type Task,
   type SizeClass,
   type WindowCount,
   type FloorType,
+  type ExportPayload,
 } from './lib/db'
 import {
   LIB,
@@ -123,6 +127,10 @@ export default function Manage({ onBack }: { onBack: () => void }) {
 
   const [rd, setRd] = useState<RdState | null>(null)
   const finishingRef = useRef(false)
+
+  const [importError, setImportError] = useState<string | null>(null)
+  const [pendingImport, setPendingImport] = useState<ExportPayload | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Once the current suggestion list is exhausted and there's nothing left to
   // prompt for removal, finish automatically — mirrors the mockup's render()
@@ -566,6 +574,60 @@ export default function Manage({ onBack }: { onBack: () => void }) {
     }
   }
 
+  // -- data export / import ----------------------------------------------
+
+  async function handleExport() {
+    const payload = await exportAllData()
+    const json = JSON.stringify(payload, null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const date = new Date().toISOString().slice(0, 10)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `cleaning-planner-${date}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  function openImportPicker() {
+    setImportError(null)
+    fileInputRef.current?.click()
+  }
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+
+    setImportError(null)
+    let data: unknown
+    try {
+      data = JSON.parse(await file.text())
+    } catch {
+      setImportError("Could not read that file — make sure it's a valid backup JSON.")
+      return
+    }
+    if (!isExportPayload(data)) {
+      setImportError("This file doesn't look like a Cleaning Planner backup.")
+      return
+    }
+    if (data.version > db.verno) {
+      setImportError(
+        `This backup is from a newer app version (schema v${data.version}) than this one supports (v${db.verno}). Update the app before importing.`,
+      )
+      return
+    }
+    setPendingImport(data)
+  }
+
+  async function confirmImport() {
+    if (!pendingImport) return
+    await importAllData(pendingImport)
+    window.location.reload()
+  }
+
   // -- header -----------------------------------------------------------
 
   const title =
@@ -595,45 +657,57 @@ export default function Manage({ onBack }: { onBack: () => void }) {
 
       <main className="mx-auto w-full max-w-md flex-1 px-4 py-5">
         {screen === 'manage' && (
-          <ManageHomeScreen
-            profile={profile}
-            hhOpen={hhOpen}
-            onToggleHh={() => setHhOpen(!hhOpen)}
-            onToggleProfileField={toggleProfileField}
-            rooms={rooms}
-            profileConfig={profile}
-            tasksByRoom={tasksByRoom}
-            openRooms={openRooms}
-            onToggleRoom={toggleRoomOpen}
-            onOpenConfig={openRoomConfig}
-            editingTaskId={editingTaskId}
-            confirmDeleteTaskId={confirmDeleteTaskId}
-            onOpenEditor={openTaskEditor}
-            onCloseEditor={closeTaskEditor}
-            onRename={renameTask}
-            onFreqStep={stepTaskFreq}
-            onRequestDelete={setConfirmDeleteTaskId}
-            onCancelDelete={() => setConfirmDeleteTaskId(null)}
-            onConfirmDelete={confirmDeleteTask}
-            addingRoomId={addingRoomId}
-            addDraft={addDraft}
-            ownName={ownName}
-            ownFreq={ownFreq}
-            onOpenAdd={openAddPanel}
-            onCloseAdd={closeAddPanel}
-            onSetOwnName={setOwnName}
-            onOwnFreqStep={ownFreqStep}
-            onOwnNext={ownNext}
-            onPickSuggestion={pickSuggestion}
-            onDraftFreqStep={draftFreqStep}
-            onDraftStatus={draftStatus}
-            onDraftBack={() => setAddDraft(null)}
-            onCommitDraft={commitDraft}
-            onGoRooms={() => {
-              setConfirmDeleteRoomId(null)
-              setScreen('rooms')
-            }}
-          />
+          <>
+            <ManageHomeScreen
+              profile={profile}
+              hhOpen={hhOpen}
+              onToggleHh={() => setHhOpen(!hhOpen)}
+              onToggleProfileField={toggleProfileField}
+              rooms={rooms}
+              profileConfig={profile}
+              tasksByRoom={tasksByRoom}
+              openRooms={openRooms}
+              onToggleRoom={toggleRoomOpen}
+              onOpenConfig={openRoomConfig}
+              editingTaskId={editingTaskId}
+              confirmDeleteTaskId={confirmDeleteTaskId}
+              onOpenEditor={openTaskEditor}
+              onCloseEditor={closeTaskEditor}
+              onRename={renameTask}
+              onFreqStep={stepTaskFreq}
+              onRequestDelete={setConfirmDeleteTaskId}
+              onCancelDelete={() => setConfirmDeleteTaskId(null)}
+              onConfirmDelete={confirmDeleteTask}
+              addingRoomId={addingRoomId}
+              addDraft={addDraft}
+              ownName={ownName}
+              ownFreq={ownFreq}
+              onOpenAdd={openAddPanel}
+              onCloseAdd={closeAddPanel}
+              onSetOwnName={setOwnName}
+              onOwnFreqStep={ownFreqStep}
+              onOwnNext={ownNext}
+              onPickSuggestion={pickSuggestion}
+              onDraftFreqStep={draftFreqStep}
+              onDraftStatus={draftStatus}
+              onDraftBack={() => setAddDraft(null)}
+              onCommitDraft={commitDraft}
+              onGoRooms={() => {
+                setConfirmDeleteRoomId(null)
+                setScreen('rooms')
+              }}
+            />
+            <DataSection
+              importError={importError}
+              pendingImport={pendingImport}
+              fileInputRef={fileInputRef}
+              onExport={handleExport}
+              onImportClick={openImportPicker}
+              onImportFile={handleImportFile}
+              onCancelImport={() => setPendingImport(null)}
+              onConfirmImport={confirmImport}
+            />
+          </>
         )}
 
         {screen === 'rooms' && (
@@ -1201,6 +1275,68 @@ function ManageHomeScreen({
       <button type="button" onClick={onGoRooms} className={`${CTA_GHOST} mt-2`}>
         + Add or remove rooms
       </button>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Data section (export / import) — bottom of the manage screen
+// ---------------------------------------------------------------------------
+
+function DataSection({
+  importError,
+  pendingImport,
+  fileInputRef,
+  onExport,
+  onImportClick,
+  onImportFile,
+  onCancelImport,
+  onConfirmImport,
+}: {
+  importError: string | null
+  pendingImport: ExportPayload | null
+  fileInputRef: React.RefObject<HTMLInputElement | null>
+  onExport: () => void
+  onImportClick: () => void
+  onImportFile: (e: React.ChangeEvent<HTMLInputElement>) => void
+  onCancelImport: () => void
+  onConfirmImport: () => void
+}) {
+  return (
+    <>
+      <div className="mb-2 mt-4 text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">Data</div>
+      {pendingImport ? (
+        <ConfirmCard
+          message="Replace all current data with this backup? This can't be undone."
+          confirmLabel="Replace data"
+          onCancel={onCancelImport}
+          onConfirm={onConfirmImport}
+        />
+      ) : (
+        <div className={`${CARD} p-3.5`}>
+          <p className="mb-2.5 text-[12.5px] leading-relaxed text-neutral-400 dark:text-neutral-500">
+            Back up everything to a file on this device, or restore from a backup.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onExport}
+              className="flex-1 rounded-lg border border-black/5 bg-white py-2.5 text-[13px] font-semibold text-neutral-900 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-100"
+            >
+              Export data
+            </button>
+            <button
+              type="button"
+              onClick={onImportClick}
+              className="flex-1 rounded-lg border border-black/5 bg-white py-2.5 text-[13px] font-semibold text-neutral-900 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-100"
+            >
+              Import data
+            </button>
+          </div>
+          {importError && <p className="mt-2.5 text-[12px] leading-relaxed text-red-500">{importError}</p>}
+          <input ref={fileInputRef} type="file" accept=".json,application/json" onChange={onImportFile} className="hidden" />
+        </div>
+      )}
     </>
   )
 }

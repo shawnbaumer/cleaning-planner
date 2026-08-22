@@ -488,6 +488,93 @@ export async function deleteRoomCascade(roomId: number): Promise<void> {
   })
 }
 
+export interface ExportPayload {
+  version: number
+  exportedAt: string
+  tables: {
+    homes: Home[]
+    rooms: Room[]
+    tasks: Task[]
+    completionLogs: CompletionLog[]
+  }
+}
+
+/** Reads every table into a single exportable snapshot, tagged with the current Dexie schema version. */
+export async function exportAllData(): Promise<ExportPayload> {
+  const [homes, rooms, tasks, completionLogs] = await Promise.all([
+    db.homes.toArray(),
+    db.rooms.toArray(),
+    db.tasks.toArray(),
+    db.completionLogs.toArray(),
+  ])
+  return {
+    version: db.verno,
+    exportedAt: new Date().toISOString(),
+    tables: { homes, rooms, tasks, completionLogs },
+  }
+}
+
+/** Structural check that an arbitrary parsed JSON value looks like an ExportPayload, before trusting its `tables`. */
+export function isExportPayload(data: unknown): data is ExportPayload {
+  if (!data || typeof data !== 'object') return false
+  const d = data as Record<string, unknown>
+  if (typeof d.version !== 'number' || typeof d.exportedAt !== 'string') return false
+  if (!d.tables || typeof d.tables !== 'object') return false
+  const t = d.tables as Record<string, unknown>
+  return Array.isArray(t.homes) && Array.isArray(t.rooms) && Array.isArray(t.tasks) && Array.isArray(t.completionLogs)
+}
+
+/**
+ * Backfills fields that later schema versions added, for a backup exported
+ * from an older version — bulkAdd (used by importAllData) skips Dexie's
+ * upgrade() hooks entirely, so a v1 export's rows would otherwise land
+ * without the v2 fields the current schema expects. Mirrors the v2
+ * upgrade() migration's own defaults (see the constructor above).
+ */
+function normalizeForCurrentSchema(payload: ExportPayload): ExportPayload {
+  if (payload.version >= 2) return payload
+
+  const homes = payload.tables.homes.length
+    ? payload.tables.homes
+    : [{ id: 1, name: 'Home', pets: false, plants: false, wfh: false }]
+  const homeId = homes[0].id
+  const rooms = payload.tables.rooms.map((r) => {
+    const raw = r as Partial<Room> & Record<string, unknown>
+    return {
+      ...r,
+      homeId: raw.homeId ?? homeId,
+      sizeClass: raw.sizeClass ?? ('M' as SizeClass),
+      windows: raw.windows ?? (1 as WindowCount),
+      floor: raw.floor ?? ('hard' as FloorType),
+      equipment: raw.equipment ?? ([] as string[]),
+    }
+  })
+  return { ...payload, tables: { ...payload.tables, homes, rooms } }
+}
+
+/**
+ * Replaces every table's contents with a backup's, in one transaction.
+ * Refuses a backup from a newer schema version than this app understands
+ * (an older app has no way to know what a future field means); a backup
+ * from an older version is normalized up to the current schema first.
+ */
+export async function importAllData(payload: ExportPayload): Promise<void> {
+  if (payload.version > db.verno) {
+    throw new Error(
+      `This backup is from a newer app version (schema v${payload.version}) than this app supports (v${db.verno}). Update the app before importing.`,
+    )
+  }
+  const normalized = normalizeForCurrentSchema(payload)
+
+  await db.transaction('rw', db.homes, db.rooms, db.tasks, db.completionLogs, async () => {
+    await Promise.all([db.homes.clear(), db.rooms.clear(), db.tasks.clear(), db.completionLogs.clear()])
+    await db.homes.bulkAdd(normalized.tables.homes)
+    await db.rooms.bulkAdd(normalized.tables.rooms)
+    await db.tasks.bulkAdd(normalized.tables.tasks)
+    await db.completionLogs.bulkAdd(normalized.tables.completionLogs)
+  })
+}
+
 /**
  * DEV-ONLY: seeds a small starter set of home/rooms/tasks, bypassing the
  * setup wizard, for quick local iteration on the main list. No-ops if any

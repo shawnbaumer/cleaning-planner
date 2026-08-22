@@ -672,7 +672,13 @@ function TaskCard({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        style={{ touchAction: 'pan-y' }}
+        onContextMenu={(e) => e.preventDefault()}
+        style={{
+          touchAction: 'pan-y',
+          WebkitTouchCallout: 'none',
+          WebkitUserSelect: 'none',
+          userSelect: 'none',
+        }}
         aria-label={`Complete "${task.name}"`}
         className={`block w-full rounded-xl p-3 transition ${
           open

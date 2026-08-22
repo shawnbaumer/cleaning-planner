@@ -385,6 +385,50 @@ export async function logCompletion(
   })
 }
 
+export interface UndoResult {
+  log: CompletionLog
+  /** What task.lastCompletedDate became after the undo — the next most recent remaining log's date, or null if none remain. */
+  newLastCompletedDate: number | null
+}
+
+/**
+ * Undoes a task's most recent completion: deletes that CompletionLog,
+ * rewinds lastCompletedDate to the next most recent remaining log's date (or
+ * null if none remain — there's no stored record of the wizard's original
+ * baseline to fall back to instead), and recomputes the rolling duration
+ * estimate so it excludes the removed log. Returns the removed log (null if
+ * the task had none) so the caller can offer a same-session "redo" — this
+ * app has no persisted undo/redo history beyond that.
+ */
+export async function undoLastCompletion(taskId: number): Promise<UndoResult | null> {
+  return db.transaction('rw', db.tasks, db.completionLogs, async () => {
+    const logs = await db.completionLogs.where('taskId').equals(taskId).sortBy('completedDate')
+    const last = logs[logs.length - 1]
+    if (!last) return null
+
+    await db.completionLogs.delete(last.id)
+    const previous = logs[logs.length - 2]
+    const newLastCompletedDate = previous ? previous.completedDate : null
+    await db.tasks.update(taskId, { lastCompletedDate: newLastCompletedDate })
+    await recalculateEstimatedDuration(taskId)
+
+    return { log: last, newLastCompletedDate }
+  })
+}
+
+/**
+ * Re-adds a previously undone completion log (with its original id, so it's
+ * an exact restore) and re-derives lastCompletedDate/estimatedDurationMinutes
+ * from the resulting log history — the inverse of undoLastCompletion.
+ */
+export async function redoCompletion(log: CompletionLog): Promise<void> {
+  await db.transaction('rw', db.tasks, db.completionLogs, async () => {
+    await db.completionLogs.add(log)
+    await db.tasks.update(log.taskId, { lastCompletedDate: log.completedDate })
+    await recalculateEstimatedDuration(log.taskId)
+  })
+}
+
 /**
  * A compact due-status label for the card's title row in whole days, e.g.
  * "2d over" (overdue), "Today" (due now / within half a day either way), or
@@ -397,6 +441,18 @@ export function formatDueShort(task: Task, now: Date = new Date()): string {
 
   if (days === 0) return 'Today'
   return ms >= 0 ? `${days}d` : `${days}d over`
+}
+
+/**
+ * A relative label for how long ago a task was last completed, e.g. "3 days
+ * ago", "Today", or "Never" (a task with no lastCompletedDate at all).
+ */
+export function formatLastCompleted(task: Task, now: Date = new Date()): string {
+  if (task.lastCompletedDate === null) return 'Never'
+
+  const days = Math.round((now.getTime() - task.lastCompletedDate) / MS_PER_DAY)
+  if (days <= 0) return 'Today'
+  return days === 1 ? '1 day ago' : `${days} days ago`
 }
 
 /**

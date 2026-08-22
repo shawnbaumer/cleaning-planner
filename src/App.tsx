@@ -6,6 +6,8 @@ import Manage from './Manage'
 import {
   db,
   logCompletion,
+  undoLastCompletion,
+  redoCompletion,
   msUntilDue,
   percentDue,
   urgencyBand,
@@ -18,9 +20,11 @@ import {
   outlineColor,
   severeOverdue,
   formatDueShort,
+  formatLastCompleted,
   randomizeTaskState,
   type Task,
   type Room,
+  type CompletionLog,
 } from './lib/db'
 import { roomIcon, iconForTask } from './lib/icons'
 
@@ -270,6 +274,12 @@ const BEAT_MS = 200
 // stop holding the settled state open forever.
 const SETTLE_FALLBACK_MS = 2000
 
+// Long-press (undo-completion sheet) tuning: how long a press must hold
+// before it counts as a long-press, and how far the pointer may drift before
+// it's treated as a scroll gesture instead and the press is cancelled.
+const LONG_PRESS_MS = 500
+const LONG_PRESS_MOVE_TOLERANCE_PX = 10
+
 const hexToRgb = (hex: string): [number, number, number] => {
   const n = parseInt(hex.slice(1), 16)
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
@@ -297,6 +307,7 @@ function TaskCard({
   isActive,
   onActivate,
   onClose,
+  onLongPress,
   flipRef,
 }: {
   task: Task
@@ -307,6 +318,8 @@ function TaskCard({
   isActive: boolean
   onActivate: () => void
   onClose: () => void
+  /** Long-press (~500ms, held roughly in place): opens the undo-last-completion sheet for this task. */
+  onLongPress: () => void
   flipRef: (el: HTMLLIElement | null) => void
 }) {
   const [mode, setMode] = useState<Interaction>('idle')
@@ -328,6 +341,11 @@ function TaskCard({
   // once even if the card unmounts mid-animation (e.g. a view toggle).
   const pendingCompleteRef = useRef<{ minutes: number } | null>(null)
   const loggedRef = useRef(false)
+
+  // Long-press (undo-completion sheet) tracking.
+  const longPressTimerRef = useRef<number | null>(null)
+  const longPressFiredRef = useRef(false)
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null)
 
   // Collapse this card's interaction if another card becomes the active one.
   // Never interrupts an in-flight reset animation (that lives in `anim`).
@@ -366,6 +384,7 @@ function TaskCard({
           actualDurationMinutes: pendingCompleteRef.current.minutes,
         })
       }
+      if (longPressTimerRef.current !== null) window.clearTimeout(longPressTimerRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -382,6 +401,56 @@ function TaskCard({
       setAnim(null)
     }
   }, [task.lastCompletedDate])
+
+  // Long-press vs. tap vs. scroll: a timer starts on pointerdown and fires
+  // onLongPress if it isn't cancelled first. It's cancelled by pointerup/
+  // cancel (a normal tap or release), or by the pointer drifting more than
+  // LONG_PRESS_MOVE_TOLERANCE_PX (treated as the start of a scroll, not a
+  // long-press hold) — the tile itself is a plain button, not a touch-move
+  // listener, so this drift check is what keeps a long-press attempt from
+  // swallowing an iOS scroll gesture. `touch-action: pan-y` on the button
+  // (below) does the same for the browser's own gesture recognizer.
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (open) return
+    pointerStartRef.current = { x: e.clientX, y: e.clientY }
+    longPressFiredRef.current = false
+    clearLongPressTimer()
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null
+      longPressFiredRef.current = true
+      onLongPress()
+    }, LONG_PRESS_MS)
+  }
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    const start = pointerStartRef.current
+    if (!start) return
+    const dx = e.clientX - start.x
+    const dy = e.clientY - start.y
+    if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_TOLERANCE_PX) clearLongPressTimer()
+  }
+
+  const handlePointerUp = () => {
+    clearLongPressTimer()
+  }
+
+  // A long-press that fired still generates a trailing click once the
+  // pointer lifts — swallow exactly that one so it doesn't also open the
+  // Start/Complete prompt.
+  const handleClick = () => {
+    if (longPressFiredRef.current) {
+      longPressFiredRef.current = false
+      return
+    }
+    openPrompt()
+  }
 
   const openPrompt = () => {
     onActivate()
@@ -598,7 +667,12 @@ function TaskCard({
       {/* Base tile — always rendered; blurs behind the prompt when open. */}
       <button
         type="button"
-        onClick={openPrompt}
+        onClick={handleClick}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        style={{ touchAction: 'pan-y' }}
         aria-label={`Complete "${task.name}"`}
         className={`block w-full rounded-xl p-3 transition ${
           open
@@ -662,6 +736,84 @@ function TaskCard({
         </>
       )}
     </li>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Undo-last-completion sheet (long-press a task tile)
+// ---------------------------------------------------------------------------
+
+/**
+ * A small bottom sheet for one task, opened by long-pressing its tile.
+ * Undo deletes the task's most recent CompletionLog and rewinds
+ * lastCompletedDate/estimatedDurationMinutes to match; while `canRedo` is
+ * true (the App-level in-memory record of an undo not yet superseded by
+ * another completion) it offers "Redo completion" instead, restoring exactly
+ * what was removed. Disabled (with a note) if the task has no completion log
+ * to undo.
+ */
+function UndoSheet({
+  task,
+  canRedo,
+  onUndo,
+  onRedo,
+  onCancel,
+}: {
+  task: Task
+  canRedo: boolean
+  onUndo: () => void
+  onRedo: () => void
+  onCancel: () => void
+}) {
+  const logCount = useLiveQuery(
+    () => db.completionLogs.where('taskId').equals(task.id).count(),
+    [task.id],
+  )
+  const canUndo = (logCount ?? 0) > 0
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/30" onClick={onCancel} aria-hidden="true" />
+      <div className="absolute inset-x-0 bottom-0 mx-auto max-w-md rounded-t-2xl bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-lg dark:bg-neutral-900">
+        <p className="text-[15px] font-semibold text-neutral-900 dark:text-neutral-100">{task.name}</p>
+        <p className="mt-0.5 text-[13px] text-neutral-500 dark:text-neutral-400">
+          Last completed: {formatLastCompleted(task)}
+        </p>
+
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex-1 rounded-lg border border-black/5 bg-white py-2.5 text-[13.5px] font-semibold text-neutral-900 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-100"
+          >
+            Cancel
+          </button>
+          {canRedo ? (
+            <button
+              type="button"
+              onClick={onRedo}
+              className="flex-1 rounded-lg bg-neutral-900 py-2.5 text-[13.5px] font-semibold text-white dark:bg-neutral-100 dark:text-neutral-900"
+            >
+              Redo completion
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              className="flex-1 rounded-lg bg-neutral-900 py-2.5 text-[13.5px] font-semibold text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
+            >
+              Undo last completion
+            </button>
+          )}
+        </div>
+        {!canRedo && !canUndo && (
+          <p className="mt-2 text-center text-[12px] text-neutral-400 dark:text-neutral-500">
+            No completions logged for this task yet.
+          </p>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -796,6 +948,17 @@ function App() {
   const [pickMinutes, setPickMinutes] = useState(30)
   const [plan, setPlan] = useState<FocusPlan | null>(null)
 
+  // Undo-last-completion sheet — which task's sheet is open (long-press), and
+  // an in-memory (session-only, never persisted) record of the most recent
+  // undo per task so a second long-press can offer "Redo completion". A
+  // task's entry is only honored while its lastCompletedDate still matches
+  // what the undo left it at — any newer completion (or another edit)
+  // invalidates it without needing to hook into every mutation path.
+  const [undoSheetTaskId, setUndoSheetTaskId] = useState<number | null>(null)
+  const [undoneByTaskId, setUndoneByTaskId] = useState<
+    Map<number, { log: CompletionLog; lastCompletedDateAfterUndo: number | null }>
+  >(new Map())
+
   // A different key than viewMode alone so entering/exiting Focus mode also
   // suppresses FLIP across the drastic list-shape change (full list <-> the
   // filtered plan), while completions *within* an active plan still glide
@@ -858,11 +1021,46 @@ function App() {
       isActive={activeTaskId === task.id}
       onActivate={() => setActiveTaskId(task.id)}
       onClose={() => setActiveTaskId((id) => (id === task.id ? null : id))}
+      onLongPress={() => setUndoSheetTaskId(task.id)}
       flipRef={flip(task.id)}
     />
   )
 
   const hasTasks = tasks.length > 0
+
+  const undoSheetTask = undoSheetTaskId !== null ? tasks.find((t) => t.id === undoSheetTaskId) : undefined
+  const undoneForSheetTask = undoSheetTask ? undoneByTaskId.get(undoSheetTask.id) : undefined
+  const undoSheetCanRedo =
+    !!undoneForSheetTask &&
+    !!undoSheetTask &&
+    undoSheetTask.lastCompletedDate === undoneForSheetTask.lastCompletedDateAfterUndo
+
+  const handleUndoCompletion = async () => {
+    if (!undoSheetTask) return
+    const result = await undoLastCompletion(undoSheetTask.id)
+    if (result) {
+      setUndoneByTaskId((prev) => {
+        const next = new Map(prev)
+        next.set(undoSheetTask.id, {
+          log: result.log,
+          lastCompletedDateAfterUndo: result.newLastCompletedDate,
+        })
+        return next
+      })
+    }
+    setUndoSheetTaskId(null)
+  }
+
+  const handleRedoCompletion = async () => {
+    if (!undoSheetTask || !undoneForSheetTask) return
+    await redoCompletion(undoneForSheetTask.log)
+    setUndoneByTaskId((prev) => {
+      const next = new Map(prev)
+      next.delete(undoSheetTask.id)
+      return next
+    })
+    setUndoSheetTaskId(null)
+  }
 
   // The greedy fill — this IS the feature. Computed once, on Go; stored as a
   // fixed set of ids so it never recomputes as time passes or tasks complete.
@@ -1101,6 +1299,16 @@ function App() {
           </>
         )}
       </main>
+
+      {undoSheetTask && (
+        <UndoSheet
+          task={undoSheetTask}
+          canRedo={undoSheetCanRedo}
+          onUndo={() => void handleUndoCompletion()}
+          onRedo={() => void handleRedoCompletion()}
+          onCancel={() => setUndoSheetTaskId(null)}
+        />
+      )}
     </div>
   )
 }

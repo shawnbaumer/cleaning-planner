@@ -4,6 +4,7 @@ import { Check, CircleCheck, Play, Settings, Timer } from 'lucide-react'
 import Wizard from './Wizard'
 import Manage from './Manage'
 import { playCompleteSound } from './sound'
+import { RoomSection } from './components/RoomSection'
 import {
   db,
   logCompletion,
@@ -1313,20 +1314,14 @@ function App() {
               <ul className="space-y-3">{sortedTasks.map((task) => renderTask(task, true))}</ul>
             ) : (
               <div className="space-y-6">
-                {roomGroups.map(({ room, tasks: roomTasks }) => {
-                  const RoomHeaderIcon = roomIcon(room.type)
-                  return (
-                    <section key={room.id}>
-                      <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-semibold text-neutral-500 dark:text-neutral-400">
-                        <RoomHeaderIcon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-                        {room.name}
-                      </h2>
-                      <ul className="space-y-3">
-                        {roomTasks.map((task) => renderTask(task, false))}
-                      </ul>
-                    </section>
-                  )
-                })}
+                {roomGroups.map(({ room, tasks: roomTasks }) => (
+                  <RoomSection
+                    key={room.id}
+                    room={room}
+                    tasks={roomTasks}
+                    renderTask={(task) => renderTask(task, false)}
+                  />
+                ))}
               </div>
             )}
           </>

@@ -26,11 +26,19 @@ const ENVELOPE_TOTAL_S = 0.35
 // CHORD's PEAK_GAIN) so the chord's "ping" reads as the payoff. Notes bunch
 // up toward the end (MARIMBA_SPREAD_EXPONENT < 1) for a slight speed-up.
 const MARIMBA_HZ = [659, 587, 523, 440, 392, 330, 294, 262, 220, 196, 165, 147, 131, 110]
-const MARIMBA_SPREAD_EXPONENT = 0.85
-// Fraction of the total drain duration reserved for the last note's own
-// decay — the run's note-start span is shortened by exactly this much, so
-// last-note-start + its envelope lands precisely at the drain's own end
-// (see playDrainSound), whatever duration it's actually called with.
+// Lower = notes bunch up more tightly toward the end (a stronger speed-up).
+const MARIMBA_SPREAD_EXPONENT = 0.7
+// The run targets finishing at this fraction of the drain's own duration,
+// not exactly 100% of it: real devices can render the visual drain as done
+// slightly early (dropped/coalesced frames near the end of a rAF-driven
+// animation), and a run that reliably wraps up at or before that — rather
+// than sometimes trailing audibly past it — reads as tight regardless of
+// per-device timing slop.
+const SOUND_LENGTH_FRACTION = 0.85
+// Fraction of the run's own (shortened) target duration reserved for the
+// last note's own decay — the run's note-start span is shortened by exactly
+// this much, so last-note-start + its envelope lands precisely at the run's
+// own target end (see playDrainSound), whatever duration it's called with.
 const NOTE_ENVELOPE_FRACTION = 0.1
 const NOTE_ATTACK_S = 0.004
 const NOTE_PEAK_GAIN = 0.035
@@ -99,22 +107,22 @@ function getReadyContext(): AudioContext | null {
 }
 
 /**
- * Plays the quiet descending marimba run, spread across exactly the drop
- * bar's own drain duration — the last note's own decay is timed to end
- * precisely when `durationMs` is up, so the sound's total length always
- * matches the visual drain exactly, however long that is. Call at the
- * moment that animation starts, passing its actual duration constant, so
- * the two stay in sync.
+ * Plays the quiet descending marimba run, spread across the drop bar's own
+ * drain duration — the last note's own decay is timed to end at
+ * SOUND_LENGTH_FRACTION of `durationMs`, a little ahead of the animation's
+ * own end, so the sound never trails audibly past what's on screen. Call at
+ * the moment that animation starts, passing its actual duration constant,
+ * so the two stay in sync.
  */
 export function playDrainSound(durationMs: number): void {
   const ctx = getReadyContext()
   if (!ctx) return
 
   const now = ctx.currentTime
-  const durationS = durationMs / 1000
+  const targetS = (durationMs / 1000) * SOUND_LENGTH_FRACTION
   const n = MARIMBA_HZ.length
-  const noteEnvelopeS = durationS * NOTE_ENVELOPE_FRACTION
-  const spanS = durationS - noteEnvelopeS
+  const noteEnvelopeS = targetS * NOTE_ENVELOPE_FRACTION
+  const spanS = targetS - noteEnvelopeS
 
   MARIMBA_HZ.forEach((hz, i) => {
     const start = now + spanS * Math.pow(i / (n - 1), MARIMBA_SPREAD_EXPONENT)

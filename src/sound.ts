@@ -1,5 +1,7 @@
-// Synthesized completion sound (no audio file) — a soft rising three-note
-// chord played via the Web Audio API when a task is marked Complete.
+// Synthesized completion sound (no audio file), via the Web Audio API, split
+// into two parts synced to the tile's completion animation (see App.tsx's
+// playReset): a quiet descending "drain" sweep while the drop bar empties,
+// then a soft rising chord exactly when the tile blinks/resets.
 
 const STORAGE_KEY = 'cp.soundEnabled'
 
@@ -15,6 +17,13 @@ const PEAK_GAIN = 0.16
 // with the last note staggered in at 2 * NOTE_STAGGER_S, the whole chord
 // runs for roughly ENVELOPE_TOTAL_S + 2 * NOTE_STAGGER_S ≈ 400ms.
 const ENVELOPE_TOTAL_S = 0.35
+
+// Drain sweep: descending, quiet, and lowpass-filtered so it reads as a soft
+// "whoosh" under the drop bar's own drain rather than a competing tone.
+const DRAIN_START_HZ = 880
+const DRAIN_END_HZ = 440
+const DRAIN_GAIN = 0.12
+const DRAIN_FILTER_HZ = 1200
 
 let audioContext: AudioContext | null = null
 
@@ -62,13 +71,53 @@ export function setSoundEnabled(enabled: boolean): void {
   }
 }
 
-/** Plays the soft rising completion chord, if sound is enabled. Call only from the Complete action. */
-export function playCompleteSound(): void {
-  if (!isSoundEnabled()) return
-
+/** Shared setup for both sounds: bails out if sound is off or Web Audio is unavailable, else resumes and returns the context. */
+function getReadyContext(): AudioContext | null {
+  if (!isSoundEnabled()) return null
   const ctx = ensureAudioContext()
-  if (!ctx) return
+  if (!ctx) return null
   void ctx.resume().catch(() => {})
+  return ctx
+}
+
+/**
+ * Plays the quiet descending drain sweep, timed to last exactly as long as
+ * the drop bar's own drain animation. Call at the moment that animation
+ * starts, passing its actual duration constant, so the two stay in sync.
+ */
+export function playDrainSound(durationMs: number): void {
+  const ctx = getReadyContext()
+  if (!ctx) return
+
+  const now = ctx.currentTime
+  const durationS = durationMs / 1000
+
+  const osc = ctx.createOscillator()
+  osc.type = 'sine'
+  osc.frequency.setValueAtTime(DRAIN_START_HZ, now)
+  osc.frequency.exponentialRampToValueAtTime(DRAIN_END_HZ, now + durationS)
+
+  const filter = ctx.createBiquadFilter()
+  filter.type = 'lowpass'
+  filter.frequency.value = DRAIN_FILTER_HZ
+
+  const gain = ctx.createGain()
+  gain.gain.setValueAtTime(FLOOR_GAIN, now)
+  gain.gain.exponentialRampToValueAtTime(DRAIN_GAIN, now + ATTACK_S)
+  gain.gain.exponentialRampToValueAtTime(FLOOR_GAIN, now + durationS)
+
+  osc.connect(filter)
+  filter.connect(gain)
+  gain.connect(ctx.destination)
+
+  osc.start(now)
+  osc.stop(now + durationS + 0.02)
+}
+
+/** Plays the soft rising completion chord, if sound is enabled. Call exactly when the tile blinks/resets. */
+export function playCompleteSound(): void {
+  const ctx = getReadyContext()
+  if (!ctx) return
 
   const now = ctx.currentTime
   for (const [i, freq] of CHORD_HZ.entries()) {

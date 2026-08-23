@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { Check, CircleCheck, Play, Settings, Timer } from 'lucide-react'
 import Wizard from './Wizard'
 import Manage from './Manage'
-import { playCompleteSound } from './sound'
+import { playCompleteSound, playDrainSound } from './sound'
 import { RoomSection } from './components/RoomSection'
 import {
   db,
@@ -539,6 +539,7 @@ function TaskCard({
 
     setAnim({ phase: 'drain', color: rgbToHex(startColor), stroke: rgbToHex(startStroke) })
     setDrainX(startSx)
+    playDrainSound(DRAIN_DURATION_MS)
 
     const t0 = performance.now()
     const step = (t: number) => {
@@ -557,6 +558,7 @@ function TaskCard({
         const freshColor = rgbToHex(FRESH_GREEN)
         const freshStroke = rgbToHex(FRESH_GREEN_OUTLINE)
         setAnim({ phase: 'blink', color: freshColor, stroke: freshStroke })
+        playCompleteSound()
 
         const blinkTimeout = window.setTimeout(() => {
           setAnim({ phase: 'settled', color: freshColor, stroke: freshStroke })
@@ -581,7 +583,6 @@ function TaskCard({
   }
 
   const complete = (minutes: number) => {
-    playCompleteSound()
     playReset(minutes)
   }
 

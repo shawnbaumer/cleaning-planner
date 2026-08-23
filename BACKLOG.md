@@ -26,7 +26,7 @@ beyond existing.
 7. ✅ Collapsible rooms in Rooms view.
 8. Linked tasks — library field linkedTo (mop → vacuum); on completing one,
    one-tap "Also done: X?"; Focus mode plans pairs together.
-9. **Sound polish: drain + chime** — split the completion sound into two
+9. ✅ Sound polish: drain + chime — split the completion sound into two
    parts synced to the existing completion animation: a short positive
    "draining" sound (descending sweep, e.g. sine 880→440 Hz over the drain
    duration, quiet ~0.12 gain, slightly filtered) while the drop bar drains,

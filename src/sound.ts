@@ -1,7 +1,7 @@
 // Synthesized completion sound (no audio file), via the Web Audio API, split
 // into two parts synced to the tile's completion animation (see App.tsx's
-// playReset): a quiet descending "drain" sweep while the drop bar empties,
-// then a soft rising chord exactly when the tile blinks/resets.
+// playReset): a quiet descending marimba run while the drop bar drains, then
+// a soft rising chord exactly when the tile blinks/resets.
 
 const STORAGE_KEY = 'cp.soundEnabled'
 
@@ -18,12 +18,24 @@ const PEAK_GAIN = 0.16
 // runs for roughly ENVELOPE_TOTAL_S + 2 * NOTE_STAGGER_S ≈ 400ms.
 const ENVELOPE_TOTAL_S = 0.35
 
-// Drain sweep: descending, quiet, and lowpass-filtered so it reads as a soft
-// "whoosh" under the drop bar's own drain rather than a competing tone.
-const DRAIN_START_HZ = 880
-const DRAIN_END_HZ = 440
-const DRAIN_GAIN = 0.12
-const DRAIN_FILTER_HZ = 1200
+// Drain run: a descending 9-note marimba figure (E5 pentatonic down to A3),
+// quiet and lowpass-filtered so it reads as a soft mallet run under the drop
+// bar's own drain rather than a competing tone. Notes bunch up toward the
+// end (MARIMBA_SPREAD_EXPONENT < 1) for a slight speed-up.
+const MARIMBA_HZ = [659, 587, 523, 440, 392, 330, 294, 262, 220]
+const MARIMBA_SPAN_FRACTION = 0.9
+const MARIMBA_SPREAD_EXPONENT = 0.85
+const NOTE_ATTACK_S = 0.004
+const NOTE_ENVELOPE_S = 0.2
+const NOTE_PEAK_GAIN = 0.05
+const NOTE_FILTER_START_MULT = 3
+const NOTE_FILTER_END_MULT = 1.2
+// Attack click: a brief higher-pitched tick layered under each note's onset
+// to suggest a mallet strike.
+const CLICK_FREQ_MULT = 4
+const CLICK_PEAK_FRACTION = 0.28
+const CLICK_ATTACK_S = 0.001
+const CLICK_ENVELOPE_S = 0.04
 
 let audioContext: AudioContext | null = null
 
@@ -81,9 +93,10 @@ function getReadyContext(): AudioContext | null {
 }
 
 /**
- * Plays the quiet descending drain sweep, timed to last exactly as long as
- * the drop bar's own drain animation. Call at the moment that animation
- * starts, passing its actual duration constant, so the two stay in sync.
+ * Plays the quiet descending marimba run, spread across the drop bar's own
+ * drain duration (note starts bunch up toward the end). Call at the moment
+ * that animation starts, passing its actual duration constant, so the two
+ * stay in sync.
  */
 export function playDrainSound(durationMs: number): void {
   const ctx = getReadyContext()
@@ -91,27 +104,48 @@ export function playDrainSound(durationMs: number): void {
 
   const now = ctx.currentTime
   const durationS = durationMs / 1000
+  const n = MARIMBA_HZ.length
 
-  const osc = ctx.createOscillator()
-  osc.type = 'sine'
-  osc.frequency.setValueAtTime(DRAIN_START_HZ, now)
-  osc.frequency.exponentialRampToValueAtTime(DRAIN_END_HZ, now + durationS)
+  MARIMBA_HZ.forEach((hz, i) => {
+    const start = now + MARIMBA_SPAN_FRACTION * durationS * Math.pow(i / (n - 1), MARIMBA_SPREAD_EXPONENT)
 
-  const filter = ctx.createBiquadFilter()
-  filter.type = 'lowpass'
-  filter.frequency.value = DRAIN_FILTER_HZ
+    // Main note: sine through a lowpass filter sweeping downward, giving the
+    // mallet-strike's initial brightness a quick decay toward a rounder tone.
+    const osc = ctx.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.value = hz
 
-  const gain = ctx.createGain()
-  gain.gain.setValueAtTime(FLOOR_GAIN, now)
-  gain.gain.exponentialRampToValueAtTime(DRAIN_GAIN, now + ATTACK_S)
-  gain.gain.exponentialRampToValueAtTime(FLOOR_GAIN, now + durationS)
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.setValueAtTime(hz * NOTE_FILTER_START_MULT, start)
+    filter.frequency.exponentialRampToValueAtTime(hz * NOTE_FILTER_END_MULT, start + NOTE_ENVELOPE_S)
 
-  osc.connect(filter)
-  filter.connect(gain)
-  gain.connect(ctx.destination)
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(FLOOR_GAIN, start)
+    gain.gain.exponentialRampToValueAtTime(NOTE_PEAK_GAIN, start + NOTE_ATTACK_S)
+    gain.gain.exponentialRampToValueAtTime(FLOOR_GAIN, start + NOTE_ENVELOPE_S)
 
-  osc.start(now)
-  osc.stop(now + durationS + 0.02)
+    osc.connect(filter)
+    filter.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(start)
+    osc.stop(start + NOTE_ENVELOPE_S + 0.02)
+
+    // Attack click: unfiltered, much shorter, layered at the same start time.
+    const click = ctx.createOscillator()
+    click.type = 'sine'
+    click.frequency.value = hz * CLICK_FREQ_MULT
+
+    const clickGain = ctx.createGain()
+    clickGain.gain.setValueAtTime(FLOOR_GAIN, start)
+    clickGain.gain.exponentialRampToValueAtTime(NOTE_PEAK_GAIN * CLICK_PEAK_FRACTION, start + CLICK_ATTACK_S)
+    clickGain.gain.exponentialRampToValueAtTime(FLOOR_GAIN, start + CLICK_ENVELOPE_S)
+
+    click.connect(clickGain)
+    clickGain.connect(ctx.destination)
+    click.start(start)
+    click.stop(start + CLICK_ENVELOPE_S + 0.02)
+  })
 }
 
 /** Plays the soft rising completion chord, if sound is enabled. Call exactly when the tile blinks/resets. */

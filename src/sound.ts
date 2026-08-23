@@ -18,16 +18,22 @@ const PEAK_GAIN = 0.16
 // runs for roughly ENVELOPE_TOTAL_S + 2 * NOTE_STAGGER_S ≈ 400ms.
 const ENVELOPE_TOTAL_S = 0.35
 
-// Drain run: a descending 9-note marimba figure (E5 pentatonic down to A3),
-// quiet and lowpass-filtered so it reads as a soft mallet run under the drop
-// bar's own drain rather than a competing tone. Notes bunch up toward the
-// end (MARIMBA_SPREAD_EXPONENT < 1) for a slight speed-up.
-const MARIMBA_HZ = [659, 587, 523, 440, 392, 330, 294, 262, 220]
-const MARIMBA_SPAN_FRACTION = 0.9
+// Drain run: a descending 14-note marimba figure (E5 pentatonic down to A2,
+// two extra pentatonic octaves past the original 9-note run so the same span
+// packs in more, faster notes), quiet and lowpass-filtered so it reads as a
+// soft mallet run under the drop bar's own drain rather than a competing
+// tone. Kept noticeably quieter than the chord (NOTE_PEAK_GAIN vs
+// CHORD's PEAK_GAIN) so the chord's "ping" reads as the payoff. Notes bunch
+// up toward the end (MARIMBA_SPREAD_EXPONENT < 1) for a slight speed-up.
+const MARIMBA_HZ = [659, 587, 523, 440, 392, 330, 294, 262, 220, 196, 165, 147, 131, 110]
 const MARIMBA_SPREAD_EXPONENT = 0.85
+// Fraction of the total drain duration reserved for the last note's own
+// decay — the run's note-start span is shortened by exactly this much, so
+// last-note-start + its envelope lands precisely at the drain's own end
+// (see playDrainSound), whatever duration it's actually called with.
+const NOTE_ENVELOPE_FRACTION = 0.1
 const NOTE_ATTACK_S = 0.004
-const NOTE_ENVELOPE_S = 0.2
-const NOTE_PEAK_GAIN = 0.05
+const NOTE_PEAK_GAIN = 0.035
 const NOTE_FILTER_START_MULT = 3
 const NOTE_FILTER_END_MULT = 1.2
 // Attack click: a brief higher-pitched tick layered under each note's onset
@@ -93,10 +99,12 @@ function getReadyContext(): AudioContext | null {
 }
 
 /**
- * Plays the quiet descending marimba run, spread across the drop bar's own
- * drain duration (note starts bunch up toward the end). Call at the moment
- * that animation starts, passing its actual duration constant, so the two
- * stay in sync.
+ * Plays the quiet descending marimba run, spread across exactly the drop
+ * bar's own drain duration — the last note's own decay is timed to end
+ * precisely when `durationMs` is up, so the sound's total length always
+ * matches the visual drain exactly, however long that is. Call at the
+ * moment that animation starts, passing its actual duration constant, so
+ * the two stay in sync.
  */
 export function playDrainSound(durationMs: number): void {
   const ctx = getReadyContext()
@@ -105,9 +113,11 @@ export function playDrainSound(durationMs: number): void {
   const now = ctx.currentTime
   const durationS = durationMs / 1000
   const n = MARIMBA_HZ.length
+  const noteEnvelopeS = durationS * NOTE_ENVELOPE_FRACTION
+  const spanS = durationS - noteEnvelopeS
 
   MARIMBA_HZ.forEach((hz, i) => {
-    const start = now + MARIMBA_SPAN_FRACTION * durationS * Math.pow(i / (n - 1), MARIMBA_SPREAD_EXPONENT)
+    const start = now + spanS * Math.pow(i / (n - 1), MARIMBA_SPREAD_EXPONENT)
 
     // Main note: sine through a lowpass filter sweeping downward, giving the
     // mallet-strike's initial brightness a quick decay toward a rounder tone.
@@ -118,18 +128,18 @@ export function playDrainSound(durationMs: number): void {
     const filter = ctx.createBiquadFilter()
     filter.type = 'lowpass'
     filter.frequency.setValueAtTime(hz * NOTE_FILTER_START_MULT, start)
-    filter.frequency.exponentialRampToValueAtTime(hz * NOTE_FILTER_END_MULT, start + NOTE_ENVELOPE_S)
+    filter.frequency.exponentialRampToValueAtTime(hz * NOTE_FILTER_END_MULT, start + noteEnvelopeS)
 
     const gain = ctx.createGain()
     gain.gain.setValueAtTime(FLOOR_GAIN, start)
     gain.gain.exponentialRampToValueAtTime(NOTE_PEAK_GAIN, start + NOTE_ATTACK_S)
-    gain.gain.exponentialRampToValueAtTime(FLOOR_GAIN, start + NOTE_ENVELOPE_S)
+    gain.gain.exponentialRampToValueAtTime(FLOOR_GAIN, start + noteEnvelopeS)
 
     osc.connect(filter)
     filter.connect(gain)
     gain.connect(ctx.destination)
     osc.start(start)
-    osc.stop(start + NOTE_ENVELOPE_S + 0.02)
+    osc.stop(start + noteEnvelopeS + 0.02)
 
     // Attack click: unfiltered, much shorter, layered at the same start time.
     const click = ctx.createOscillator()
